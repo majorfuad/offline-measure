@@ -101,10 +101,13 @@ class MainActivity : ComponentActivity() {
                             unitIndex = selected
                             distanceText = formattedDistance()
                         },
-                        onPlaceAtCenter = {
+                        onPlaceAtCenter = { fractionX, fractionY ->
                             glSurfaceView?.let { view ->
                                 if (view.width > 0 && view.height > 0) {
-                                    tapHelper.queueTap(view.width / 2f, view.height / 2f)
+                                    tapHelper.queueTap(
+                                        fractionX.coerceIn(0f, 1f) * view.width,
+                                        fractionY.coerceIn(0f, 1f) * view.height
+                                    )
                                 }
                             }
                         },
