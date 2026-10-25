@@ -43,6 +43,14 @@ class MainActivity : ComponentActivity() {
                 val config = com.google.ar.core.Config(session).apply {
                     planeFindingMode = com.google.ar.core.Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
                     focusMode = com.google.ar.core.Config.FocusMode.AUTO
+                    // Depth hit tests can locate door edges outside detected plane polygons.
+                    depthMode = if (session.isDepthModeSupported(
+                            com.google.ar.core.Config.DepthMode.AUTOMATIC
+                        )) {
+                        com.google.ar.core.Config.DepthMode.AUTOMATIC
+                    } else {
+                        com.google.ar.core.Config.DepthMode.DISABLED
+                    }
                 }
                 session.configure(config)
             }
