@@ -1,19 +1,24 @@
 package com.fuad.offlinemeasure.ar
 
 import android.util.Log
+import android.opengl.Matrix
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.abs
 import com.fuad.offlinemeasure.arhelpers.DisplayRotationHelper
 import com.fuad.offlinemeasure.arhelpers.TapHelper
 import com.fuad.offlinemeasure.arhelpers.TrackingStateHelper
 import com.fuad.offlinemeasure.measurement.DistanceCalculator
 import com.fuad.offlinemeasure.rendering.SampleRender
 import com.fuad.offlinemeasure.rendering.arcore.BackgroundRenderer
-import com.fuad.offlinemeasure.rendering.arcore.PlaneRenderer
 import com.google.ar.core.Anchor
 import com.google.ar.core.Plane
 import com.google.ar.core.Point
 import com.google.ar.core.TrackingState
 import com.google.ar.core.exceptions.CameraNotAvailableException
 import java.io.IOException
+
+data class ScreenPoint(val x: Float, val y: Float)
+data class MeasurementOverlay(val points: List<ScreenPoint>, val width: Int, val height: Int)
 
 class MeasureRenderer(
     val activity: android.app.Activity,
@@ -26,11 +31,52 @@ class MeasureRenderer(
 
     lateinit var render: SampleRender
     private lateinit var backgroundRenderer: BackgroundRenderer
-    private lateinit var planeRenderer: PlaneRenderer
     private val trackingStateHelper = TrackingStateHelper(activity)
 
     // Retain ARCore anchors so points stay fixed in world space.
     private val measurementAnchors = mutableListOf<Anchor>()
+    private var viewportWidth = 1
+    private var viewportHeight = 1
+    private val clearRequested = AtomicBoolean(false)
+    private var lastOverlay: MeasurementOverlay? = null
+    var onOverlayChanged: ((MeasurementOverlay) -> Unit)? = null
+
+    fun clearMeasurement() {
+        clearRequested.set(true)
+    }
+
+    private fun publishOverlay(overlay: MeasurementOverlay) {
+        val old = lastOverlay
+        if (old != null && old.width == overlay.width && old.height == overlay.height &&
+            old.points.size == overlay.points.size &&
+            old.points.zip(overlay.points).all { (a, b) ->
+                abs(a.x - b.x) < 1.5f && abs(a.y - b.y) < 1.5f
+            }) return
+        lastOverlay = overlay
+        activity.runOnUiThread { onOverlayChanged?.invoke(overlay) }
+    }
+
+    private fun updateOverlay(viewMatrix: FloatArray, projectionMatrix: FloatArray) {
+        val vp = FloatArray(16)
+        Matrix.multiplyMM(vp, 0, projectionMatrix, 0, viewMatrix, 0)
+        val screenPoints = measurementAnchors.mapNotNull { anchor ->
+            if (anchor.trackingState != TrackingState.TRACKING) return@mapNotNull null
+            val pose = anchor.pose
+            val clip = FloatArray(4)
+            Matrix.multiplyMV(
+                clip, 0, vp, 0,
+                floatArrayOf(pose.tx(), pose.ty(), pose.tz(), 1f), 0
+            )
+            if (clip[3] <= 0.001f) return@mapNotNull null
+            val nx = clip[0] / clip[3]
+            val ny = clip[1] / clip[3]
+            if (!nx.isFinite() || !ny.isFinite()) return@mapNotNull null
+            ScreenPoint((nx + 1f) * viewportWidth / 2f,
+                (1f - ny) * viewportHeight / 2f)
+        }
+        publishOverlay(MeasurementOverlay(screenPoints, viewportWidth, viewportHeight))
+    }
+
     private var hasSetTextureNames = false
     private var rendererReady = false
     private var lastStatus: String? = null
@@ -68,7 +114,6 @@ class MeasureRenderer(
                 false
             )
 
-            planeRenderer = PlaneRenderer(render)
 
             rendererReady = true
             Log.d(TAG, "AR renderer initialized successfully")
@@ -80,6 +125,8 @@ class MeasureRenderer(
     }
 
     override fun onSurfaceChanged(render: SampleRender, width: Int, height: Int) {
+        viewportWidth = width
+        viewportHeight = height
         displayRotationHelper.onSurfaceChanged(width, height)
     }
 
@@ -163,6 +210,13 @@ class MeasureRenderer(
             Log.e(TAG, "ARCore frame update failed", e)
             postStatus("ARCore camera update failed. Check Logcat.")
             return
+        }
+
+        if (clearRequested.getAndSet(false)) {
+            measurementAnchors.forEach { it.detach() }
+            measurementAnchors.clear()
+            lastOverlay = null
+            publishOverlay(MeasurementOverlay(emptyList(), viewportWidth, viewportHeight))
         }
 
         val camera = frame.camera
@@ -271,26 +325,10 @@ class MeasureRenderer(
             100.0f
         )
 
-        /*
-         * Draw detected planes.
-         */
-        try {
-
-            planeRenderer.drawPlanes(
-                render,
-                planes,
-                camera.displayOrientedPose,
-                projectionMatrix
-            )
-
-        } catch (e: Exception) {
-
-            Log.e(
-                TAG,
-                "Failed to render planes",
-                e
-            )
-        }
+        // Hide the ARCore grid for an uncluttered camera/measurement view.
+        val viewMatrix = FloatArray(16)
+        camera.getViewMatrix(viewMatrix, 0)
+        updateOverlay(viewMatrix, projectionMatrix)
 
         /*
          * ---------------------------------------------------------
@@ -371,6 +409,7 @@ class MeasureRenderer(
                             Log.d(TAG, "Distance measured: $distance meters")
                         }
 
+                        updateOverlay(viewMatrix, projectionMatrix)
                         break
                     }
                 }
@@ -385,6 +424,6 @@ class MeasureRenderer(
             }
         }
 
-        // Anchor markers and 3D measurement line are a follow-up rendering task.
+        // The UI overlay renders projected anchor markers and a line.
     }
 }
