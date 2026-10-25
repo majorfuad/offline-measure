@@ -1,18 +1,29 @@
 package com.fuad.offlinemeasure.ui
 
 import android.opengl.GLSurfaceView
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.fuad.offlinemeasure.ar.MeasurementOverlay
 import com.fuad.offlinemeasure.ar.MeasureRenderer
 import com.fuad.offlinemeasure.arhelpers.TapHelper
 import com.fuad.offlinemeasure.rendering.SampleRender
@@ -22,8 +33,10 @@ fun MeasureScreen(
     modifier: Modifier = Modifier,
     trackingStatusText: String = "Searching for surfaces...",
     distanceText: String = "Tap two points on a plane to measure distance",
+    overlay: MeasurementOverlay = MeasurementOverlay(emptyList(), 1, 1),
     renderer: MeasureRenderer? = null,
     tapHelper: TapHelper? = null,
+    onClear: () -> Unit = {},
     onSurfaceCreated: (GLSurfaceView) -> Unit = {}
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -40,27 +53,85 @@ fun MeasureScreen(
             )
         }
 
+        // Pointer events continue through the drawn overlay to GLSurfaceView.
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val sx = size.width / overlay.width.coerceAtLeast(1)
+            val sy = size.height / overlay.height.coerceAtLeast(1)
+            val points = overlay.points.map { Offset(it.x * sx, it.y * sy) }
+            if (points.size == 2) {
+                drawLine(
+                    color = Color(0xFFFFC857),
+                    start = points[0],
+                    end = points[1],
+                    strokeWidth = 5.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+            }
+            points.forEach { point ->
+                drawCircle(color = Color.Black.copy(alpha = 0.6f), radius = 11.dp.toPx(), center = point)
+                drawCircle(color = Color(0xFFFFC857), radius = 7.dp.toPx(), center = point)
+                drawCircle(color = Color.White, radius = 3.dp.toPx(), center = point)
+            }
+        }
+
+        if (overlay.points.size == 2 && distanceText.startsWith("Distance:")) {
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val density = LocalDensity.current
+                val sx = constraints.maxWidth.toFloat() / overlay.width.coerceAtLeast(1)
+                val sy = constraints.maxHeight.toFloat() / overlay.height.coerceAtLeast(1)
+                val centerX = (overlay.points[0].x + overlay.points[1].x) * sx / 2
+                val centerY = (overlay.points[0].y + overlay.points[1].y) * sy / 2
+                val xDp = with(density) { centerX.toDp() }
+                val yDp = with(density) { centerY.toDp() }
+                Surface(
+                    modifier = Modifier.offset(
+                        x = (xDp - 70.dp).coerceIn(0.dp, (maxWidth - 140.dp).coerceAtLeast(0.dp)),
+                        y = (yDp - 54.dp).coerceIn(0.dp, (maxHeight - 120.dp).coerceAtLeast(0.dp))
+                    ),
+                    color = Color(0xE6222530),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(
+                        text = distanceText.removePrefix("Distance: "),
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+            }
+        }
+
         Surface(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(16.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
             shape = MaterialTheme.shapes.medium
         ) {
-            Column(
+            Row(
                 modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = trackingStatusText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = distanceText,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = trackingStatusText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = distanceText,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+                if (overlay.points.isNotEmpty()) {
+                    Button(
+                        modifier = Modifier.padding(start = 10.dp),
+                        onClick = onClear
+                    ) {
+                        Text("Clear")
+                    }
+                }
             }
         }
     }

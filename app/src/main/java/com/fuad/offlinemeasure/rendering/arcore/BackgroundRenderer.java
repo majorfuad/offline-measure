@@ -143,14 +143,22 @@ public class BackgroundRenderer {
     }
   }
 
+  // A newly created GL context has no camera texture coordinates. Initialize
+  // them on its first ARCore frame, even if the display geometry has not changed.
+  private boolean cameraGeometryInitialized = false;
+
   public void updateDisplayGeometry(Frame frame) {
-    if (frame.hasDisplayGeometryChanged()) {
+    if (!cameraGeometryInitialized || frame.hasDisplayGeometryChanged()) {
+      NDC_QUAD_COORDS_BUFFER.rewind();
+      cameraTexCoords.rewind();
       frame.transformCoordinates2d(
           Coordinates2d.OPENGL_NORMALIZED_DEVICE_COORDINATES,
           NDC_QUAD_COORDS_BUFFER,
           Coordinates2d.TEXTURE_NORMALIZED,
           cameraTexCoords);
+      cameraTexCoords.rewind();
       cameraTexCoordsVertexBuffer.set(cameraTexCoords);
+      cameraGeometryInitialized = true;
     }
   }
 

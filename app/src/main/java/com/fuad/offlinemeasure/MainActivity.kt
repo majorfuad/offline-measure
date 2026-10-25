@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.fuad.offlinemeasure.ar.ARCoreSessionLifecycleHelper
+import com.fuad.offlinemeasure.ar.MeasurementOverlay
 import com.fuad.offlinemeasure.ar.MeasureRenderer
 import com.fuad.offlinemeasure.arhelpers.DisplayRotationHelper
 import com.fuad.offlinemeasure.arhelpers.TapHelper
@@ -28,6 +29,7 @@ class MainActivity : ComponentActivity() {
 
     var trackingStatusText by mutableStateOf("Searching for surfaces...")
     var distanceText by mutableStateOf("Tap two points on a plane to measure distance")
+    var measurementOverlay by mutableStateOf(MeasurementOverlay(emptyList(), 1, 1))
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,9 +47,17 @@ class MainActivity : ComponentActivity() {
                 session.configure(config)
             }
         }
+        arCoreSessionLifecycleHelper.exceptionCallback = { error ->
+            android.util.Log.e("MainActivity", "ARCore session failed", error)
+            runOnUiThread {
+                trackingStatusText = "ARCore session failed: " +
+                    (error.message ?: error.javaClass.simpleName)
+            }
+        }
         lifecycle.addObserver(arCoreSessionLifecycleHelper)
 
         renderer = MeasureRenderer(this, displayRotationHelper, tapHelper).apply {
+            onOverlayChanged = { overlay -> measurementOverlay = overlay }
             onTrackingStatusChanged = { status ->
                 trackingStatusText = status
             }
@@ -67,6 +77,12 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.padding(innerPadding),
                         trackingStatusText = trackingStatusText,
                         distanceText = distanceText,
+                        overlay = measurementOverlay,
+                        onClear = {
+                            renderer.clearMeasurement()
+                            distanceText = "Tap two points on a plane to measure distance"
+                            measurementOverlay = MeasurementOverlay(emptyList(), 1, 1)
+                        },
                         renderer = renderer,
                         tapHelper = tapHelper,
                         onSurfaceCreated = { view ->
