@@ -43,6 +43,10 @@ class MainActivity : ComponentActivity() {
                 val config = com.google.ar.core.Config(session).apply {
                     planeFindingMode = com.google.ar.core.Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
                     focusMode = com.google.ar.core.Config.FocusMode.AUTO
+                    // Depth hit testing can cover non-planar regions on supported devices.
+                    if (session.isDepthModeSupported(com.google.ar.core.Config.DepthMode.AUTOMATIC)) {
+                        depthMode = com.google.ar.core.Config.DepthMode.AUTOMATIC
+                    }
                 }
                 session.configure(config)
             }
@@ -58,6 +62,7 @@ class MainActivity : ComponentActivity() {
 
         renderer = MeasureRenderer(this, displayRotationHelper, tapHelper).apply {
             onOverlayChanged = { overlay -> measurementOverlay = overlay }
+            onMeasurementHint = { hint -> distanceText = hint }
             onTrackingStatusChanged = { status ->
                 trackingStatusText = status
             }
