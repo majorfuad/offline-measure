@@ -45,6 +45,13 @@ class MainActivity : ComponentActivity() {
                 session.configure(config)
             }
         }
+        arCoreSessionLifecycleHelper.exceptionCallback = { error ->
+            android.util.Log.e("MainActivity", "ARCore session failed", error)
+            runOnUiThread {
+                trackingStatusText = "ARCore session failed: " +
+                    (error.message ?: error.javaClass.simpleName)
+            }
+        }
         lifecycle.addObserver(arCoreSessionLifecycleHelper)
 
         renderer = MeasureRenderer(this, displayRotationHelper, tapHelper).apply {
