@@ -10,7 +10,9 @@ import com.fuad.offlinemeasure.arhelpers.TrackingStateHelper
 import com.fuad.offlinemeasure.measurement.DistanceCalculator
 import com.fuad.offlinemeasure.rendering.SampleRender
 import com.fuad.offlinemeasure.rendering.arcore.BackgroundRenderer
+import com.fuad.offlinemeasure.rendering.arcore.PlaneRenderer
 import com.google.ar.core.Anchor
+import com.google.ar.core.DepthPoint
 import com.google.ar.core.Plane
 import com.google.ar.core.Point
 import com.google.ar.core.TrackingState
@@ -31,6 +33,7 @@ class MeasureRenderer(
 
     lateinit var render: SampleRender
     private lateinit var backgroundRenderer: BackgroundRenderer
+    private lateinit var planeRenderer: PlaneRenderer
     private val trackingStateHelper = TrackingStateHelper(activity)
 
     // Retain ARCore anchors so points stay fixed in world space.
@@ -40,6 +43,7 @@ class MeasureRenderer(
     private val clearRequested = AtomicBoolean(false)
     private var lastOverlay: MeasurementOverlay? = null
     var onOverlayChanged: ((MeasurementOverlay) -> Unit)? = null
+    var onMeasurementHint: ((String) -> Unit)? = null
 
     fun clearMeasurement() {
         clearRequested.set(true)
@@ -113,6 +117,7 @@ class MeasureRenderer(
                 render,
                 false
             )
+            planeRenderer = PlaneRenderer(render)
 
 
             rendererReady = true
@@ -300,16 +305,20 @@ class MeasureRenderer(
                 Plane::class.java
             )
 
-        val hasTrackingPlane =
-            planes.any { plane ->
-
-                plane.trackingState ==
-                        TrackingState.TRACKING
-            }
+        val trackedPlanes = planes.filter { plane ->
+            plane.trackingState == TrackingState.TRACKING && plane.subsumedBy == null
+        }
+        val hasTrackingPlane = trackedPlanes.isNotEmpty()
+        val hasHorizontal = trackedPlanes.any { it.type != Plane.Type.VERTICAL }
+        val hasVertical = trackedPlanes.any { it.type == Plane.Type.VERTICAL }
 
         postStatus(
-            if (hasTrackingPlane) "Surface detected. Tap to measure."
-            else "Searching for surfaces..."
+            when {
+                hasHorizontal && hasVertical -> "Floor/table and wall planes mapped. Tap tinted areas."
+                hasVertical -> "Wall mapped. Move slowly to scan other surfaces."
+                hasHorizontal -> "Horizontal surface mapped. Sweep slowly to expand."
+                else -> "Scanning for floors, tables, and walls..."
+            }
         )
 
         /*
@@ -325,7 +334,16 @@ class MeasureRenderer(
             100.0f
         )
 
-        // Hide the ARCore grid for an uncluttered camera/measurement view.
+        // Render only ARCore-confirmed polygons: a faint tint shows precisely
+        // where plane-based tapping can currently succeed.
+        try {
+            planeRenderer.drawPlanes(
+                render, trackedPlanes, camera.displayOrientedPose, projectionMatrix
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Plane visualization failed", e)
+        }
+
         val viewMatrix = FloatArray(16)
         camera.getViewMatrix(viewMatrix, 0)
         updateOverlay(viewMatrix, projectionMatrix)
@@ -355,6 +373,7 @@ class MeasureRenderer(
                         tap.y
                     )
 
+                var accepted = false
                 for (hit in hitResults) {
 
                     val trackable =
@@ -364,11 +383,14 @@ class MeasureRenderer(
                         when (trackable) {
 
                             is Plane -> {
-
-                                trackable.isPoseInPolygon(
-                                    hit.hitPose
-                                )
+                                trackable.trackingState == TrackingState.TRACKING &&
+                                    trackable.subsumedBy == null &&
+                                    trackable.isPoseInPolygon(hit.hitPose)
                             }
+
+                            // Supported devices can measure sparse or non-planar areas
+                            // using ARCore depth hits, without inventing an extended plane.
+                            is DepthPoint -> true
 
                             is Point -> {
 
@@ -410,17 +432,23 @@ class MeasureRenderer(
                         }
 
                         updateOverlay(viewMatrix, projectionMatrix)
+                        accepted = true
                         break
+                    }
+                }
+                if (!accepted) {
+                    activity.runOnUiThread {
+                        onMeasurementHint?.invoke(
+                            "No mapped surface at this point. Move slowly and try again."
+                        )
                     }
                 }
 
             } catch (e: Exception) {
-
-                Log.e(
-                    TAG,
-                    "Hit test failed",
-                    e
-                )
+                Log.e(TAG, "Hit test failed", e)
+                activity.runOnUiThread {
+                    onMeasurementHint?.invoke("Unable to place a point here. Try again.")
+                }
             }
         }
 
