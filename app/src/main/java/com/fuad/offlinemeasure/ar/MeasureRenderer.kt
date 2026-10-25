@@ -355,7 +355,17 @@ class MeasureRenderer(
                         tap.y
                     )
 
-                for (hit in hitResults) {
+                // For precise measurements, only accept currently tracked planar surfaces.
+                // Feature points often lie above or behind the surface the user intended.
+                val planeHits = hitResults.filter { hit ->
+                    val plane = hit.trackable as? Plane
+                    plane != null &&
+                        plane.trackingState == TrackingState.TRACKING &&
+                        plane.isPoseInPolygon(hit.hitPose) &&
+                        plane.subsumedBy == null
+                }.sortedBy { it.distance }
+
+                for (hit in planeHits) {
 
                     val trackable =
                         hit.trackable
@@ -410,6 +420,8 @@ class MeasureRenderer(
                         }
 
                         updateOverlay(viewMatrix, projectionMatrix)
+                        Log.d(TAG, "Measurement tap at (" + tap.x + ", " + tap.y +
+                            "), plane hit distance=" + hit.distance + "m")
                         break
                     }
                 }
