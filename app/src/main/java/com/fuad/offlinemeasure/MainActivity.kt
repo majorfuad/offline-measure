@@ -1,10 +1,10 @@
 package com.fuad.offlinemeasure
 
-import android.Manifest
+import android.opengl.GLSurfaceView
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
@@ -24,31 +24,33 @@ class MainActivity : ComponentActivity() {
     lateinit var displayRotationHelper: DisplayRotationHelper
     lateinit var tapHelper: TapHelper
     lateinit var renderer: MeasureRenderer
+    var glSurfaceView: GLSurfaceView? = null
 
+    var trackingStatusText by mutableStateOf("Searching for surfaces...")
     var distanceText by mutableStateOf("Tap two points on a plane to measure distance")
-
-    private val cameraPermissionLauncher =
-        registerForActivityResult(
-            ActivityResultContracts.RequestPermission()
-        ) { granted ->
-            if (granted) {
-                showApp()
-            }
-        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-    }
-
-    private fun showApp() {
-        arCoreSessionLifecycleHelper = ARCoreSessionLifecycleHelper(this)
-        lifecycle.addObserver(arCoreSessionLifecycleHelper)
+        enableEdgeToEdge()
 
         displayRotationHelper = DisplayRotationHelper(this)
         tapHelper = TapHelper(this)
 
+        arCoreSessionLifecycleHelper = ARCoreSessionLifecycleHelper(this).apply {
+            beforeSessionResume = { session ->
+                val config = com.google.ar.core.Config(session).apply {
+                    planeFindingMode = com.google.ar.core.Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
+                    focusMode = com.google.ar.core.Config.FocusMode.AUTO
+                }
+                session.configure(config)
+            }
+        }
+        lifecycle.addObserver(arCoreSessionLifecycleHelper)
+
         renderer = MeasureRenderer(this, displayRotationHelper, tapHelper).apply {
+            onTrackingStatusChanged = { status ->
+                trackingStatusText = status
+            }
             onDistanceCalculated = { distance ->
                 distanceText = if (distance != null) {
                     String.format("Distance: %.2f meters", distance)
@@ -63,9 +65,13 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     MeasureScreen(
                         modifier = Modifier.padding(innerPadding),
+                        trackingStatusText = trackingStatusText,
                         distanceText = distanceText,
                         renderer = renderer,
-                        tapHelper = tapHelper
+                        tapHelper = tapHelper,
+                        onSurfaceCreated = { view ->
+                            glSurfaceView = view
+                        }
                     )
                 }
             }
@@ -74,12 +80,24 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        displayRotationHelper.onResume()
+
+        if (::displayRotationHelper.isInitialized) {
+            displayRotationHelper.onResume()
+        }
+
+        if (::renderer.isInitialized) {
+            renderer.resetCameraTexture()
+        }
+
+        glSurfaceView?.onResume()
     }
 
     override fun onPause() {
         super.onPause()
-        displayRotationHelper.onPause()
+        if (::displayRotationHelper.isInitialized) {
+            displayRotationHelper.onPause()
+        }
+        glSurfaceView?.onPause()
     }
 
     override fun onRequestPermissionsResult(

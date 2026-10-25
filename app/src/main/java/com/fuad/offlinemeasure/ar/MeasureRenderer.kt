@@ -9,7 +9,9 @@ import com.fuad.offlinemeasure.rendering.SampleRender
 import com.fuad.offlinemeasure.rendering.arcore.BackgroundRenderer
 import com.fuad.offlinemeasure.rendering.arcore.PlaneRenderer
 import com.google.ar.core.Plane
+import com.google.ar.core.Point
 import com.google.ar.core.TrackingState
+import com.google.ar.core.exceptions.CameraNotAvailableException
 import java.io.IOException
 
 class MeasureRenderer(
@@ -27,15 +29,39 @@ class MeasureRenderer(
     private val trackingStateHelper = TrackingStateHelper(activity)
 
     private val points = mutableListOf<MeasurementPoint>()
+    private var hasSetTextureNames = false
     var onDistanceCalculated: ((Float?) -> Unit)? = null
+    var onTrackingStatusChanged: ((String) -> Unit)? = null
+
+    fun resetCameraTexture() {
+        hasSetTextureNames = false
+    }
 
     override fun onSurfaceCreated(render: SampleRender) {
         this.render = render
+
         try {
             backgroundRenderer = BackgroundRenderer(render)
+
+            // IMPORTANT:
+            // Creates the normal camera background shader.
+            backgroundRenderer.setUseDepthVisualization(
+                render,
+                false
+            )
+
+            // We aren't using depth occlusion yet.
+            backgroundRenderer.setUseOcclusion(
+                render,
+                false
+            )
+
             planeRenderer = PlaneRenderer(render)
+
+            Log.d(TAG, "AR renderer initialized successfully")
+
         } catch (e: IOException) {
-            Log.e(TAG, "Failed to read asset", e)
+            Log.e(TAG, "Failed to initialize AR renderer assets", e)
         }
     }
 
@@ -44,53 +70,328 @@ class MeasureRenderer(
     }
 
     override fun onDrawFrame(render: SampleRender) {
-        val session = (activity as? com.fuad.offlinemeasure.MainActivity)?.arCoreSessionLifecycleHelper?.session ?: return
-        session.setCameraTextureName(backgroundRenderer.cameraColorTexture.textureId)
 
-        displayRotationHelper.updateSessionIfNeeded(session)
+        val activity =
+            activity as? com.fuad.offlinemeasure.MainActivity
+                ?: return
 
-        val frame = try {
-            session.update()
-        } catch (e: Exception) {
-            Log.e(TAG, "Camera update exception", e)
-            return
+        val session =
+            activity.arCoreSessionLifecycleHelper.session
+                ?: return
+
+        /*
+         * ARCore needs to know which OpenGL texture it should write
+         * the live camera image into.
+         *
+         * Do this only once after the GL texture has been created.
+         */
+        if (!hasSetTextureNames) {
+
+            session.setCameraTextureNames(
+                intArrayOf(
+                    backgroundRenderer
+                        .cameraColorTexture
+                        .textureId
+                )
+            )
+
+            hasSetTextureNames = true
+
+            Log.d(
+                TAG,
+                "Camera texture configured: " +
+                        backgroundRenderer
+                            .cameraColorTexture
+                            .textureId
+            )
         }
 
-        backgroundRenderer.updateDisplayGeometry(frame)
-        backgroundRenderer.drawBackground(render)
+        /*
+         * Update ARCore when display orientation/size changes.
+         *
+         * IMPORTANT:
+         * This must happen before session.update().
+         */
+        displayRotationHelper.updateSessionIfNeeded(
+            session
+        )
+
+        /*
+         * Request the newest ARCore frame.
+         */
+        val frame = try {
+
+            session.update()
+
+        } catch (e: CameraNotAvailableException) {
+
+            Log.e(
+                TAG,
+                "Camera not available",
+                e
+            )
+
+            activity.runOnUiThread {
+
+                onTrackingStatusChanged?.invoke(
+                    "Camera unavailable"
+                )
+            }
+
+            return
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "ARCore frame update failed",
+                e
+            )
+
+            return
+        }
 
         val camera = frame.camera
-        val trackingState = camera.trackingState
-        trackingStateHelper.updateKeepScreenOnFlag(trackingState)
 
-        if (trackingState != TrackingState.TRACKING) {
+        /*
+         * Update texture coordinates whenever screen geometry,
+         * camera orientation, etc. changes.
+         */
+        backgroundRenderer.updateDisplayGeometry(
+            frame
+        )
+
+        /*
+         * timestamp == 0 means ARCore has not yet supplied
+         * a valid camera frame.
+         */
+        if (frame.timestamp != 0L) {
+
+            try {
+
+                backgroundRenderer.drawBackground(
+                    render
+                )
+
+            } catch (e: Exception) {
+
+                Log.e(
+                    TAG,
+                    "Failed to draw camera background",
+                    e
+                )
+            }
+        }
+
+        /*
+         * Update screen-on behavior based on AR tracking.
+         */
+        trackingStateHelper.updateKeepScreenOnFlag(
+            camera.trackingState
+        )
+
+        /*
+         * If ARCore isn't tracking yet, don't attempt
+         * plane rendering or hit testing.
+         */
+        if (
+            camera.trackingState !=
+            TrackingState.TRACKING
+        ) {
+
+            val failureReason =
+                TrackingStateHelper
+                    .getTrackingFailureReasonString(
+                        camera
+                    )
+
+            val message =
+                if (failureReason.isNotEmpty()) {
+
+                    failureReason
+
+                } else {
+
+                    "Searching for surfaces..."
+                }
+
+            activity.runOnUiThread {
+
+                onTrackingStatusChanged?.invoke(
+                    message
+                )
+            }
+
             return
         }
 
-        val projMatrix = FloatArray(16)
-        camera.getProjectionMatrix(projMatrix, 0, 0.1f, 100.0f)
+        /*
+         * Check whether we ACTUALLY have a tracked plane.
+         *
+         * Camera tracking alone does not mean that
+         * a usable surface has been found.
+         */
+        val planes =
+            session.getAllTrackables(
+                Plane::class.java
+            )
 
-        planeRenderer.drawPlanes(render, session.getAllTrackables(Plane::class.java), camera.pose, projMatrix)
+        val hasTrackingPlane =
+            planes.any { plane ->
 
-        val tap = tapHelper.poll()
-        if (tap != null && camera.trackingState == TrackingState.TRACKING) {
-            for (hit in frame.hitTest(tap)) {
-                val trackable = hit.trackable
-                if ((trackable is Plane && trackable.isPoseInPolygon(hit.hitPose))) {
-                    val pose = hit.hitPose
-                    val point = MeasurementPoint(pose.tx(), pose.ty(), pose.tz())
-                    points.add(point)
-                    if (points.size >= 2) {
-                        val p1 = points[points.size - 2]
-                        val p2 = points[points.size - 1]
-                        val distance = DistanceCalculator.distanceMeters(p1, p2)
-                        onDistanceCalculated?.invoke(distance)
-                    } else {
-                        onDistanceCalculated?.invoke(null)
-                    }
-                    break
-                }
+                plane.trackingState ==
+                        TrackingState.TRACKING
+            }
+
+        activity.runOnUiThread {
+
+            if (hasTrackingPlane) {
+
+                onTrackingStatusChanged?.invoke(
+                    "Surface detected. Tap to measure."
+                )
+
+            } else {
+
+                onTrackingStatusChanged?.invoke(
+                    "Searching for surfaces..."
+                )
             }
         }
+
+        /*
+         * Get projection matrix for drawing AR objects.
+         */
+        val projectionMatrix =
+            FloatArray(16)
+
+        camera.getProjectionMatrix(
+            projectionMatrix,
+            0,
+            0.1f,
+            100.0f
+        )
+
+        /*
+         * Draw detected planes.
+         */
+        try {
+
+            planeRenderer.drawPlanes(
+                render,
+                planes,
+                camera.displayOrientedPose,
+                projectionMatrix
+            )
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "Failed to render planes",
+                e
+            )
+        }
+
+        /*
+         * ---------------------------------------------------------
+         * HANDLE USER TAP
+         * ---------------------------------------------------------
+         *
+         * TapHelper stores MotionEvents coming from the UI thread.
+         * We consume one here on the GL/render thread.
+         */
+        val tap =
+            tapHelper.poll()
+
+        if (
+            tap != null &&
+            camera.trackingState ==
+            TrackingState.TRACKING
+        ) {
+
+            try {
+
+                val hitResults =
+                    frame.hitTest(
+                        tap.x,
+                        tap.y
+                    )
+
+                for (hit in hitResults) {
+
+                    val trackable =
+                        hit.trackable
+
+                    val validHit =
+                        when (trackable) {
+
+                            is Plane -> {
+
+                                trackable.isPoseInPolygon(
+                                    hit.hitPose
+                                )
+                            }
+
+                            is Point -> {
+
+                                trackable.orientationMode ==
+                                        Point.OrientationMode
+                                            .ESTIMATED_SURFACE_NORMAL
+                            }
+
+                            else -> false
+                        }
+
+                    if (validHit) {
+
+                        /*
+                         * For now we're just logging the hit.
+                         *
+                         * T14/T16 will convert this into anchors.
+                         */
+                        val pose =
+                            hit.hitPose
+
+                        Log.d(
+                            TAG,
+                            """
+                        Valid AR hit:
+                        x=${pose.tx()}
+                        y=${pose.ty()}
+                        z=${pose.tz()}
+                        distance=${hit.distance}
+                        trackable=${trackable.javaClass.simpleName}
+                        """.trimIndent()
+                        )
+
+                        /*
+                         * If you ALREADY implemented your
+                         * anchor-placement function, uncomment:
+                         *
+                         * addAnchor(hit.createAnchor())
+                         */
+
+                        break
+                    }
+                }
+
+            } catch (e: Exception) {
+
+                Log.e(
+                    TAG,
+                    "Hit test failed",
+                    e
+                )
+            }
+        }
+
+        /*
+         * Later phases go here:
+         *
+         * drawAnchors(...)
+         * drawMeasurementLine(...)
+         * updateDistance(...)
+         */
     }
 }

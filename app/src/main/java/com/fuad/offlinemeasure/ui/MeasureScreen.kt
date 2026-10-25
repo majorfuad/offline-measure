@@ -2,6 +2,7 @@ package com.fuad.offlinemeasure.ui
 
 import android.opengl.GLSurfaceView
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -19,9 +20,11 @@ import com.fuad.offlinemeasure.rendering.SampleRender
 @Composable
 fun MeasureScreen(
     modifier: Modifier = Modifier,
+    trackingStatusText: String = "Searching for surfaces...",
     distanceText: String = "Tap two points on a plane to measure distance",
     renderer: MeasureRenderer? = null,
-    tapHelper: TapHelper? = null
+    tapHelper: TapHelper? = null,
+    onSurfaceCreated: (GLSurfaceView) -> Unit = {}
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         if (renderer != null && tapHelper != null) {
@@ -30,6 +33,7 @@ fun MeasureScreen(
                     GLSurfaceView(context).apply {
                         SampleRender(this, renderer, context.assets)
                         setOnTouchListener(tapHelper)
+                        onSurfaceCreated(this)
                     }
                 },
                 modifier = Modifier.fillMaxSize()
@@ -40,14 +44,24 @@ fun MeasureScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(16.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
             shape = MaterialTheme.shapes.medium
         ) {
-            Text(
-                text = distanceText,
+            Column(
                 modifier = Modifier.padding(16.dp),
-                style = MaterialTheme.typography.bodyLarge
-            )
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = trackingStatusText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = distanceText,
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
         }
     }
 }
