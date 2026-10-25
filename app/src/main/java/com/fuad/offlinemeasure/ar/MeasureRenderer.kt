@@ -382,9 +382,6 @@ class MeasureRenderer(
                 }
 
                 for (hit in listOfNotNull(preferredHit)) {
-                    val validHit = true
-
-                    if (validHit) {
 
                         // A third tap begins a new measurement.
                         if (measurementAnchors.size == 2) {
@@ -418,7 +415,6 @@ class MeasureRenderer(
                             "), type=" + hit.trackable.javaClass.simpleName +
                             ", hit distance=" + hit.distance + "m")
                         break
-                    }
                 }
 
             } catch (e: Exception) {
