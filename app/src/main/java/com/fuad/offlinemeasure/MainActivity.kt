@@ -63,6 +63,13 @@ class MainActivity : ComponentActivity() {
                 val config = com.google.ar.core.Config(session).apply {
                     planeFindingMode = com.google.ar.core.Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
                     focusMode = com.google.ar.core.Config.FocusMode.AUTO
+                    depthMode = if (session.isDepthModeSupported(
+                            com.google.ar.core.Config.DepthMode.AUTOMATIC
+                        )) {
+                        com.google.ar.core.Config.DepthMode.AUTOMATIC
+                    } else {
+                        com.google.ar.core.Config.DepthMode.DISABLED
+                    }
                 }
                 session.configure(config)
             }
