@@ -13,8 +13,14 @@ import java.util.concurrent.BlockingQueue;
  * render thread.
  */
 public final class TapHelper implements OnTouchListener {
+  public static final class Tap {
+    public final float x;
+    public final float y;
+    public Tap(float x, float y) { this.x = x; this.y = y; }
+  }
+
   private final GestureDetector gestureDetector;
-  private final BlockingQueue<MotionEvent> queuedSingleTaps = new ArrayBlockingQueue<>(16);
+  private final BlockingQueue<Tap> queuedSingleTaps = new ArrayBlockingQueue<>(16);
 
   /**
    * Creates the tap helper.
@@ -29,7 +35,7 @@ public final class TapHelper implements OnTouchListener {
               @Override
               public boolean onSingleTapUp(MotionEvent e) {
                 // Queue tap if there is space. Tap is lost if queue is full.
-                queuedSingleTaps.offer(e);
+                queuedSingleTaps.offer(new Tap(e.getX(), e.getY()));
                 return true;
               }
 
@@ -43,9 +49,9 @@ public final class TapHelper implements OnTouchListener {
   /**
    * Polls for a tap.
    *
-   * @return if a tap was queued, a MotionEvent for the tap. Otherwise null if no taps are queued.
+   * @return if a tap was queued, the copied coordinates for the tap. Otherwise null if no taps are queued.
    */
-  public MotionEvent poll() {
+  public Tap poll() {
     return queuedSingleTaps.poll();
   }
 
