@@ -2,6 +2,11 @@ package com.fuad.offlinemeasure.ui
 
 import android.opengl.GLSurfaceView
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -44,13 +49,28 @@ fun MeasureScreen(
     overlay: MeasurementOverlay = MeasurementOverlay(emptyList(), 1, 1),
     unitIndex: Int = 0,
     onUnitChange: (Int) -> Unit = {},
-    onPlaceAtCenter: () -> Unit = {},
+    onPlaceAtCenter: (Float, Float) -> Unit = {},
     renderer: MeasureRenderer? = null,
     tapHelper: TapHelper? = null,
     onClear: () -> Unit = {},
     onSurfaceCreated: (GLSurfaceView) -> Unit = {}
 ) {
     var precisionMode by remember { mutableStateOf(false) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
+    var canvasWidth by remember { mutableIntStateOf(1) }
+    var canvasHeight by remember { mutableIntStateOf(1) }
+    val density = LocalDensity.current
+    val nudge = with(density) { 3.dp.toPx() }
+    fun adjust(dx: Float, dy: Float) {
+        offsetX = (offsetX + dx).coerceIn(-canvasWidth * 0.46f, canvasWidth * 0.46f)
+        offsetY = (offsetY + dy).coerceIn(-canvasHeight * 0.46f, canvasHeight * 0.46f)
+    }
+    fun confirmPoint() {
+        val x = (0.5f + offsetX / canvasWidth.coerceAtLeast(1)).coerceIn(0.01f, 0.99f)
+        val y = (0.5f + offsetY / canvasHeight.coerceAtLeast(1)).coerceIn(0.01f, 0.99f)
+        onPlaceAtCenter(x, y)
+    }
     Box(modifier = modifier.fillMaxSize()) {
         if (renderer != null && tapHelper != null) {
             AndroidView(
@@ -87,8 +107,17 @@ fun MeasureScreen(
         }
 
         if (precisionMode) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val c = center
+            Canvas(modifier = Modifier
+                .fillMaxSize()
+                .onSizeChanged { canvasWidth = it.width; canvasHeight = it.height }
+                .pointerInput(precisionMode) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        adjust(dragAmount.x, dragAmount.y)
+                    }
+                }
+            ) {
+                val c = Offset(center.x + offsetX, center.y + offsetY)
                 val yellow = Color(0xFFFFC857)
                 val inner = 7.dp.toPx()
                 val outer = 21.dp.toPx()
@@ -160,16 +189,36 @@ fun MeasureScreen(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = { precisionMode = !precisionMode }) {
+                    Button(onClick = {
+                        precisionMode = !precisionMode
+                        offsetX = 0f
+                        offsetY = 0f
+                    }) {
                         Text(if (precisionMode) "Tap mode" else "Precision")
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     if (precisionMode) {
-                        Button(onClick = onPlaceAtCenter) { Text("Add point") }
+                        Button(onClick = { confirmPoint() }) { Text("Confirm point") }
                     }
                     Spacer(modifier = Modifier.weight(1f))
                     Button(onClick = { onUnitChange((unitIndex + 1) % 4) }) {
                         Text(listOf("m", "cm", "in", "ft")[unitIndex.coerceIn(0, 3)])
+                    }
+                }
+                if (precisionMode) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Drag the crosshair to the corner, nudge to refine, then confirm.",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Button(onClick = { adjust(-nudge, 0f) }) { Text("←") }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Button(onClick = { adjust(nudge, 0f) }) { Text("→") }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Button(onClick = { adjust(0f, -nudge) }) { Text("↑") }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Button(onClick = { adjust(0f, nudge) }) { Text("↓") }
                     }
                 }
             }
