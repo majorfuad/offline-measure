@@ -11,6 +11,7 @@ import com.fuad.offlinemeasure.measurement.DistanceCalculator
 import com.fuad.offlinemeasure.rendering.SampleRender
 import com.fuad.offlinemeasure.rendering.arcore.BackgroundRenderer
 import com.google.ar.core.Anchor
+import com.google.ar.core.DepthPoint
 import com.google.ar.core.Plane
 import com.google.ar.core.Point
 import com.google.ar.core.TrackingState
@@ -80,6 +81,7 @@ class MeasureRenderer(
     private var hasSetTextureNames = false
     private var rendererReady = false
     private var lastStatus: String? = null
+    private var placementFeedback: String? = null
 
     private fun postStatus(message: String) {
         if (lastStatus == message) return
@@ -307,10 +309,8 @@ class MeasureRenderer(
                         TrackingState.TRACKING
             }
 
-        postStatus(
-            if (hasTrackingPlane) "Surface detected. Tap to measure."
-            else "Searching for surfaces..."
-        )
+        postStatus(placementFeedback ?: if (hasTrackingPlane) "Surface detected. Tap to measure."
+            else "Searching for surfaces...")
 
         /*
          * Get projection matrix for drawing AR objects.
@@ -355,42 +355,33 @@ class MeasureRenderer(
                         tap.y
                     )
 
-                // For precise measurements, only accept currently tracked planar surfaces.
-                // Feature points often lie above or behind the surface the user intended.
-                val planeHits = hitResults.filter { hit ->
-                    val plane = hit.trackable as? Plane
-                    plane != null &&
-                        plane.trackingState == TrackingState.TRACKING &&
-                        plane.isPoseInPolygon(hit.hitPose) &&
-                        plane.subsumedBy == null
-                }.sortedBy { it.distance }
+                // Depth-assisted hits can land on door edges outside plane polygons.
+                // Prefer a nearby depth hit, then the closest valid tracked plane.
+                // A feature point is the last resort because its depth may be noisy.
+                val validHits = hitResults.filter { hit ->
+                    when (val trackable = hit.trackable) {
+                        is DepthPoint -> trackable.trackingState == TrackingState.TRACKING
+                        is Plane -> trackable.trackingState == TrackingState.TRACKING &&
+                            trackable.subsumedBy == null &&
+                            trackable.isPoseInPolygon(hit.hitPose)
+                        is Point -> trackable.trackingState == TrackingState.TRACKING &&
+                            trackable.orientationMode == Point.OrientationMode.ESTIMATED_SURFACE_NORMAL
+                        else -> false
+                    }
+                }
 
-                for (hit in planeHits) {
+                val preferredHit = validHits.firstOrNull { it.trackable is DepthPoint }
+                    ?: validHits.firstOrNull { it.trackable is Plane }
+                    ?: validHits.firstOrNull { it.trackable is Point }
 
-                    val trackable =
-                        hit.trackable
+                if (preferredHit == null) {
+                    placementFeedback = "No reliable 3D point here. Move closer and scan the edge."
+                    postStatus(placementFeedback!!)
+                } else {
+                    placementFeedback = null
+                }
 
-                    val validHit =
-                        when (trackable) {
-
-                            is Plane -> {
-
-                                trackable.isPoseInPolygon(
-                                    hit.hitPose
-                                )
-                            }
-
-                            is Point -> {
-
-                                trackable.orientationMode ==
-                                        Point.OrientationMode
-                                            .ESTIMATED_SURFACE_NORMAL
-                            }
-
-                            else -> false
-                        }
-
-                    if (validHit) {
+                for (hit in listOfNotNull(preferredHit)) {
 
                         // A third tap begins a new measurement.
                         if (measurementAnchors.size == 2) {
@@ -421,9 +412,9 @@ class MeasureRenderer(
 
                         updateOverlay(viewMatrix, projectionMatrix)
                         Log.d(TAG, "Measurement tap at (" + tap.x + ", " + tap.y +
-                            "), plane hit distance=" + hit.distance + "m")
+                            "), type=" + hit.trackable.javaClass.simpleName +
+                            ", hit distance=" + hit.distance + "m")
                         break
-                    }
                 }
 
             } catch (e: Exception) {
