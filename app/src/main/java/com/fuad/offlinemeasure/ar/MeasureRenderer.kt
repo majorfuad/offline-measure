@@ -8,6 +8,7 @@ import com.fuad.offlinemeasure.measurement.DistanceCalculator
 import com.fuad.offlinemeasure.rendering.SampleRender
 import com.fuad.offlinemeasure.rendering.arcore.BackgroundRenderer
 import com.fuad.offlinemeasure.rendering.arcore.PlaneRenderer
+import com.google.ar.core.Anchor
 import com.google.ar.core.Plane
 import com.google.ar.core.Point
 import com.google.ar.core.TrackingState
@@ -28,7 +29,8 @@ class MeasureRenderer(
     private lateinit var planeRenderer: PlaneRenderer
     private val trackingStateHelper = TrackingStateHelper(activity)
 
-    private val points = mutableListOf<MeasurementPoint>()
+    // Retain ARCore anchors so points stay fixed in world space.
+    private val measurementAnchors = mutableListOf<Anchor>()
     private var hasSetTextureNames = false
     private var rendererReady = false
     private var lastStatus: String? = null
@@ -342,32 +344,32 @@ class MeasureRenderer(
 
                     if (validHit) {
 
-                        /*
-                         * For now we're just logging the hit.
-                         *
-                         * T14/T16 will convert this into anchors.
-                         */
-                        val pose =
-                            hit.hitPose
+                        // A third tap begins a new measurement.
+                        if (measurementAnchors.size == 2) {
+                            measurementAnchors.forEach { it.detach() }
+                            measurementAnchors.clear()
+                        }
 
-                        Log.d(
-                            TAG,
-                            """
-                        Valid AR hit:
-                        x=${pose.tx()}
-                        y=${pose.ty()}
-                        z=${pose.tz()}
-                        distance=${hit.distance}
-                        trackable=${trackable.javaClass.simpleName}
-                        """.trimIndent()
-                        )
+                        val anchor = hit.createAnchor()
+                        measurementAnchors.add(anchor)
 
-                        /*
-                         * If you ALREADY implemented your
-                         * anchor-placement function, uncomment:
-                         *
-                         * addAnchor(hit.createAnchor())
-                         */
+                        if (measurementAnchors.size == 1) {
+                            activity.runOnUiThread {
+                                onDistanceCalculated?.invoke(null)
+                            }
+                            Log.d(TAG, "Measurement point 1 placed")
+                        } else {
+                            val a = measurementAnchors[0].pose
+                            val b = measurementAnchors[1].pose
+                            val distance = DistanceCalculator.distanceMeters(
+                                MeasurementPoint(a.tx(), a.ty(), a.tz()),
+                                MeasurementPoint(b.tx(), b.ty(), b.tz())
+                            )
+                            activity.runOnUiThread {
+                                onDistanceCalculated?.invoke(distance)
+                            }
+                            Log.d(TAG, "Distance measured: $distance meters")
+                        }
 
                         break
                     }
@@ -383,12 +385,6 @@ class MeasureRenderer(
             }
         }
 
-        /*
-         * Later phases go here:
-         *
-         * drawAnchors(...)
-         * drawMeasurementLine(...)
-         * updateDistance(...)
-         */
+        // Anchor markers and 3D measurement line are a follow-up rendering task.
     }
 }
