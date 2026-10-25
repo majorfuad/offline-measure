@@ -86,12 +86,10 @@ public class PlaneRenderer {
         Shader.createFromAssets(render, VERTEX_SHADER_NAME, FRAGMENT_SHADER_NAME, null)
             .setTexture("u_Texture", texture)
             .setVec4("u_GridControl", GRID_CONTROL)
-            .setBlend(
-                BlendFactor.DST_ALPHA,
-                BlendFactor.ONE,
-                BlendFactor.ZERO,
-                BlendFactor.ONE_MINUS_SRC_ALPHA)
-            .setDepthWrite(false);
+            .setBlend(BlendFactor.SRC_ALPHA, BlendFactor.ONE_MINUS_SRC_ALPHA)
+            .setDepthTest(false)
+            .setDepthWrite(false)
+            .setCullFace(false);
 
     indexBufferObject = new IndexBuffer(render, null);
     vertexBufferObject = new VertexBuffer(render, COORDS_PER_VERTEX, null);
@@ -182,10 +180,8 @@ public class PlaneRenderer {
       }
 
       float distance = calculateDistanceToPlane(plane.getCenterPose(), cameraPose);
-      if (distance < 0) {
-        continue;
-      }
-      sortedPlanes.add(new SortablePlane(distance, plane));
+      // Vertical planes can face either direction; don't reject back-facing walls.
+      sortedPlanes.add(new SortablePlane(Math.abs(distance), plane));
     }
     Collections.sort(
         sortedPlanes,
