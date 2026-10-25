@@ -9,17 +9,25 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -34,11 +42,15 @@ fun MeasureScreen(
     trackingStatusText: String = "Searching for surfaces...",
     distanceText: String = "Tap two points on a plane to measure distance",
     overlay: MeasurementOverlay = MeasurementOverlay(emptyList(), 1, 1),
+    unitIndex: Int = 0,
+    onUnitChange: (Int) -> Unit = {},
+    onPlaceAtCenter: () -> Unit = {},
     renderer: MeasureRenderer? = null,
     tapHelper: TapHelper? = null,
     onClear: () -> Unit = {},
     onSurfaceCreated: (GLSurfaceView) -> Unit = {}
 ) {
+    var precisionMode by remember { mutableStateOf(false) }
     Box(modifier = modifier.fillMaxSize()) {
         if (renderer != null && tapHelper != null) {
             AndroidView(
@@ -71,6 +83,26 @@ fun MeasureScreen(
                 drawCircle(color = Color.Black.copy(alpha = 0.6f), radius = 11.dp.toPx(), center = point)
                 drawCircle(color = Color(0xFFFFC857), radius = 7.dp.toPx(), center = point)
                 drawCircle(color = Color.White, radius = 3.dp.toPx(), center = point)
+            }
+        }
+
+        if (precisionMode) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val c = center
+                val yellow = Color(0xFFFFC857)
+                val inner = 7.dp.toPx()
+                val outer = 21.dp.toPx()
+                drawCircle(color = Color.Black.copy(alpha = 0.7f),
+                    radius = inner + 2.dp.toPx(), center = c, style = Stroke(3.dp.toPx()))
+                drawCircle(color = yellow, radius = inner, center = c, style = Stroke(2.dp.toPx()))
+                drawLine(yellow, Offset(c.x - outer, c.y), Offset(c.x - inner - 4.dp.toPx(), c.y),
+                    strokeWidth = 2.dp.toPx())
+                drawLine(yellow, Offset(c.x + inner + 4.dp.toPx(), c.y), Offset(c.x + outer, c.y),
+                    strokeWidth = 2.dp.toPx())
+                drawLine(yellow, Offset(c.x, c.y - outer), Offset(c.x, c.y - inner - 4.dp.toPx()),
+                    strokeWidth = 2.dp.toPx())
+                drawLine(yellow, Offset(c.x, c.y + inner + 4.dp.toPx()), Offset(c.x, c.y + outer),
+                    strokeWidth = 2.dp.toPx())
             }
         }
 
@@ -108,28 +140,36 @@ fun MeasureScreen(
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
             shape = MaterialTheme.shapes.medium
         ) {
-            Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = trackingStatusText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = distanceText,
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = trackingStatusText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = distanceText,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                    if (overlay.points.isNotEmpty()) {
+                        Button(onClick = onClear) { Text("Clear") }
+                    }
                 }
-                if (overlay.points.isNotEmpty()) {
-                    Button(
-                        modifier = Modifier.padding(start = 10.dp),
-                        onClick = onClear
-                    ) {
-                        Text("Clear")
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = { precisionMode = !precisionMode }) {
+                        Text(if (precisionMode) "Tap mode" else "Precision")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    if (precisionMode) {
+                        Button(onClick = onPlaceAtCenter) { Text("Add point") }
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    Button(onClick = { onUnitChange((unitIndex + 1) % 4) }) {
+                        Text(listOf("m", "cm", "in", "ft")[unitIndex.coerceIn(0, 3)])
                     }
                 }
             }
