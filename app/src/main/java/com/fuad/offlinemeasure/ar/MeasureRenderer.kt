@@ -30,6 +30,14 @@ class MeasureRenderer(
 
     private val points = mutableListOf<MeasurementPoint>()
     private var hasSetTextureNames = false
+    private var rendererReady = false
+    private var lastStatus: String? = null
+
+    private fun postStatus(message: String) {
+        if (lastStatus == message) return
+        lastStatus = message
+        activity.runOnUiThread { onTrackingStatusChanged?.invoke(message) }
+    }
     var onDistanceCalculated: ((Float?) -> Unit)? = null
     var onTrackingStatusChanged: ((String) -> Unit)? = null
 
@@ -39,6 +47,8 @@ class MeasureRenderer(
 
     override fun onSurfaceCreated(render: SampleRender) {
         this.render = render
+        rendererReady = false
+        hasSetTextureNames = false
 
         try {
             backgroundRenderer = BackgroundRenderer(render)
@@ -58,10 +68,12 @@ class MeasureRenderer(
 
             planeRenderer = PlaneRenderer(render)
 
+            rendererReady = true
             Log.d(TAG, "AR renderer initialized successfully")
 
         } catch (e: IOException) {
             Log.e(TAG, "Failed to initialize AR renderer assets", e)
+            postStatus("AR renderer initialization failed. Check Logcat.")
         }
     }
 
@@ -70,6 +82,7 @@ class MeasureRenderer(
     }
 
     override fun onDrawFrame(render: SampleRender) {
+        if (!rendererReady) return
 
         val activity =
             activity as? com.fuad.offlinemeasure.MainActivity
@@ -77,7 +90,10 @@ class MeasureRenderer(
 
         val session =
             activity.arCoreSessionLifecycleHelper.session
-                ?: return
+                ?: run {
+                    postStatus("Starting AR camera...")
+                    return
+                }
 
         /*
          * ARCore needs to know which OpenGL texture it should write
@@ -142,12 +158,8 @@ class MeasureRenderer(
 
         } catch (e: Exception) {
 
-            Log.e(
-                TAG,
-                "ARCore frame update failed",
-                e
-            )
-
+            Log.e(TAG, "ARCore frame update failed", e)
+            postStatus("ARCore camera update failed. Check Logcat.")
             return
         }
 
@@ -157,9 +169,13 @@ class MeasureRenderer(
          * Update texture coordinates whenever screen geometry,
          * camera orientation, etc. changes.
          */
-        backgroundRenderer.updateDisplayGeometry(
-            frame
-        )
+        try {
+            backgroundRenderer.updateDisplayGeometry(frame)
+        } catch (e: Exception) {
+            Log.e(TAG, "Camera display geometry update failed", e)
+            postStatus("Camera preview geometry failed. Check Logcat.")
+            return
+        }
 
         /*
          * timestamp == 0 means ARCore has not yet supplied
@@ -175,11 +191,8 @@ class MeasureRenderer(
 
             } catch (e: Exception) {
 
-                Log.e(
-                    TAG,
-                    "Failed to draw camera background",
-                    e
-                )
+                Log.e(TAG, "Failed to draw camera background", e)
+                postStatus("Camera preview draw failed. Check Logcat.")
             }
         }
 
@@ -215,12 +228,7 @@ class MeasureRenderer(
                     "Searching for surfaces..."
                 }
 
-            activity.runOnUiThread {
-
-                onTrackingStatusChanged?.invoke(
-                    message
-                )
-            }
+            postStatus(message)
 
             return
         }
@@ -243,21 +251,10 @@ class MeasureRenderer(
                         TrackingState.TRACKING
             }
 
-        activity.runOnUiThread {
-
-            if (hasTrackingPlane) {
-
-                onTrackingStatusChanged?.invoke(
-                    "Surface detected. Tap to measure."
-                )
-
-            } else {
-
-                onTrackingStatusChanged?.invoke(
-                    "Searching for surfaces..."
-                )
-            }
-        }
+        postStatus(
+            if (hasTrackingPlane) "Surface detected. Tap to measure."
+            else "Searching for surfaces..."
+        )
 
         /*
          * Get projection matrix for drawing AR objects.
