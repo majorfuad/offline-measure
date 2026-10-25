@@ -51,6 +51,11 @@ public final class TapHelper implements OnTouchListener {
    *
    * @return if a tap was queued, the copied coordinates for the tap. Otherwise null if no taps are queued.
    */
+  /** Queue a center-reticle placement from the UI, using GL view-local pixels. */
+  public void queueTap(float x, float y) {
+    queuedSingleTaps.offer(new Tap(x, y));
+  }
+
   public Tap poll() {
     return queuedSingleTaps.poll();
   }
