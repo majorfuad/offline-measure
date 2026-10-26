@@ -45,6 +45,7 @@ import com.fuad.offlinemeasure.rendering.SampleRender
 fun MeasureScreen(
     modifier: Modifier = Modifier,
     trackingStatusText: String = "Searching for surfaces...",
+    placementQualityText: String = "Point quality not yet evaluated",
     distanceText: String = "Tap two points on a plane to measure distance",
     overlay: MeasurementOverlay = MeasurementOverlay(emptyList(), 1, 1),
     unitIndex: Int = 0,
@@ -196,6 +197,14 @@ fun MeasureScreen(
                             style = MaterialTheme.typography.bodyLarge,
                             modifier = Modifier.padding(top = 4.dp)
                         )
+                        if (overlay.points.isNotEmpty()) {
+                            Text(
+                                text = placementQualityText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
                     }
                     if (overlay.points.isNotEmpty()) {
                         Button(onClick = onClear) { Text("Clear") }
