@@ -118,6 +118,17 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         },
+                        onReplacePoint = { index, fractionX, fractionY ->
+                            glSurfaceView?.let { view ->
+                                if (view.width > 0 && view.height > 0) {
+                                    tapHelper.queueTap(
+                                        fractionX.coerceIn(0f, 1f) * view.width,
+                                        fractionY.coerceIn(0f, 1f) * view.height,
+                                        index
+                                    )
+                                }
+                            }
+                        },
                         onClear = {
                             renderer.clearMeasurement()
                             measuredMeters = null
