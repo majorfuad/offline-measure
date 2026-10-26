@@ -77,6 +77,7 @@ fun MeasureScreen(
     var glView by remember { mutableStateOf<GLSurfaceView?>(null) }
     var magnifiedFrame by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
     var capturePending by remember { mutableStateOf(false) }
+    var magnifierTarget by remember { mutableStateOf(Offset(0.5f, 0.5f)) }
     val latestOffsetX by rememberUpdatedState(offsetX)
     val latestOffsetY by rememberUpdatedState(offsetY)
     var canvasWidth by remember { mutableIntStateOf(1) }
@@ -122,6 +123,10 @@ fun MeasureScreen(
                 val left = (x - radius).coerceIn(0, view.width - radius * 2)
                 val top = (y - radius).coerceIn(0, view.height - radius * 2)
                 val source = Rect(left, top, left + radius * 2, top + radius * 2)
+                magnifierTarget = Offset(
+                    (x - left).coerceIn(0, radius * 2) / (radius * 2f),
+                    (y - top).coerceIn(0, radius * 2) / (radius * 2f)
+                )
                 val bitmap = Bitmap.createBitmap(480, 480, Bitmap.Config.ARGB_8888)
                 capturePending = true
                 try {
@@ -223,7 +228,10 @@ fun MeasureScreen(
                             contentScale = ContentScale.FillBounds
                         )
                         Canvas(Modifier.fillMaxSize()) {
-                            val c = center
+                            val c = Offset(
+                                size.width * magnifierTarget.x,
+                                size.height * magnifierTarget.y
+                            )
                             drawLine(Color.Black, Offset(c.x - 17.dp.toPx(), c.y),
                                 Offset(c.x + 17.dp.toPx(), c.y), 4.dp.toPx())
                             drawLine(Color.Black, Offset(c.x, c.y - 17.dp.toPx()),
