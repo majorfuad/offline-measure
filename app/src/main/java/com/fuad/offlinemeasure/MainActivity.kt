@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity() {
     var glSurfaceView: GLSurfaceView? = null
 
     var trackingStatusText by mutableStateOf("Searching for surfaces...")
+    var placementQualityText by mutableStateOf("Point quality not yet evaluated")
     var distanceText by mutableStateOf("Tap two points on a plane to measure distance")
     private var measuredMeters by mutableStateOf<Float?>(null)
     private var firstPointPlaced by mutableStateOf(false)
@@ -85,6 +86,7 @@ class MainActivity : ComponentActivity() {
 
         renderer = MeasureRenderer(this, displayRotationHelper, tapHelper).apply {
             onOverlayChanged = { overlay -> measurementOverlay = overlay }
+            onPlacementQualityChanged = { message -> placementQualityText = message }
             onTrackingStatusChanged = { status ->
                 trackingStatusText = status
             }
@@ -101,6 +103,7 @@ class MainActivity : ComponentActivity() {
                     MeasureScreen(
                         modifier = Modifier.padding(innerPadding),
                         trackingStatusText = trackingStatusText,
+                        placementQualityText = placementQualityText,
                         distanceText = distanceText,
                         overlay = measurementOverlay,
                         unitIndex = unitIndex,
@@ -118,10 +121,22 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         },
+                        onReplacePoint = { index, fractionX, fractionY ->
+                            glSurfaceView?.let { view ->
+                                if (view.width > 0 && view.height > 0) {
+                                    tapHelper.queueTap(
+                                        fractionX.coerceIn(0f, 1f) * view.width,
+                                        fractionY.coerceIn(0f, 1f) * view.height,
+                                        index
+                                    )
+                                }
+                            }
+                        },
                         onClear = {
                             renderer.clearMeasurement()
                             measuredMeters = null
                             firstPointPlaced = false
+                            placementQualityText = "Point quality not yet evaluated"
                             distanceText = formattedDistance()
                             measurementOverlay = MeasurementOverlay(emptyList(), 1, 1)
                         },
