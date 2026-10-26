@@ -383,14 +383,25 @@ class MeasureRenderer(
 
                 for (hit in listOfNotNull(preferredHit)) {
 
-                        // A third tap begins a new measurement.
-                        if (measurementAnchors.size == 2) {
-                            measurementAnchors.forEach { it.detach() }
-                            measurementAnchors.clear()
+                        // Replace the selected anchor without discarding the other endpoint.
+                        // A regular third tap starts a fresh two-point measurement.
+                        if (tap.replaceIndex >= 0) {
+                            if (tap.replaceIndex >= measurementAnchors.size) {
+                                placementFeedback = "Select an existing endpoint to refine."
+                                postStatus(placementFeedback!!)
+                                break
+                            }
+                            val replacement = hit.createAnchor()
+                            measurementAnchors[tap.replaceIndex].detach()
+                            measurementAnchors[tap.replaceIndex] = replacement
+                            Log.d(TAG, "Replaced measurement endpoint ${tap.replaceIndex + 1}")
+                        } else {
+                            if (measurementAnchors.size == 2) {
+                                measurementAnchors.forEach { it.detach() }
+                                measurementAnchors.clear()
+                            }
+                            measurementAnchors.add(hit.createAnchor())
                         }
-
-                        val anchor = hit.createAnchor()
-                        measurementAnchors.add(anchor)
 
                         if (measurementAnchors.size == 1) {
                             activity.runOnUiThread {
