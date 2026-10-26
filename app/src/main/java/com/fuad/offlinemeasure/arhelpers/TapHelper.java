@@ -16,7 +16,13 @@ public final class TapHelper implements OnTouchListener {
   public static final class Tap {
     public final float x;
     public final float y;
-    public Tap(float x, float y) { this.x = x; this.y = y; }
+    public final int replaceIndex;
+    public Tap(float x, float y) { this(x, y, -1); }
+    public Tap(float x, float y, int replaceIndex) {
+      this.x = x;
+      this.y = y;
+      this.replaceIndex = replaceIndex;
+    }
   }
 
   private final GestureDetector gestureDetector;
@@ -54,6 +60,11 @@ public final class TapHelper implements OnTouchListener {
   /** Queue a center-reticle placement from the UI, using GL view-local pixels. */
   public void queueTap(float x, float y) {
     queuedSingleTaps.offer(new Tap(x, y));
+  }
+
+  /** Replace an existing anchor, or append if replaceIndex is -1. */
+  public void queueTap(float x, float y, int replaceIndex) {
+    queuedSingleTaps.offer(new Tap(x, y, replaceIndex));
   }
 
   public Tap poll() {
