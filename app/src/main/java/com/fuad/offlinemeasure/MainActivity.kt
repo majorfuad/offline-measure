@@ -2,6 +2,7 @@ package com.fuad.offlinemeasure
 
 import android.opengl.GLSurfaceView
 import android.os.Bundle
+import java.util.Locale
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -29,6 +30,25 @@ class MainActivity : ComponentActivity() {
 
     var trackingStatusText by mutableStateOf("Searching for surfaces...")
     var distanceText by mutableStateOf("Tap two points on a plane to measure distance")
+    private var measuredMeters by mutableStateOf<Float?>(null)
+    private var firstPointPlaced by mutableStateOf(false)
+    var unitIndex by mutableStateOf(0)
+    private val unitLabels = listOf("m", "cm", "in", "ft")
+
+    private fun formattedDistance(): String {
+        val meters = measuredMeters ?: return if (firstPointPlaced) {
+            "Point 1 set. Add second point."
+        } else {
+            "Tap two points on a plane to measure distance"
+        }
+        val value = when (unitIndex) {
+            1 -> meters * 100f
+            2 -> meters * 39.3700787f
+            3 -> meters * 3.2808399f
+            else -> meters
+        }
+        return String.format(Locale.US, "Distance: %.2f %s", value, unitLabels[unitIndex])
+    }
     var measurementOverlay by mutableStateOf(MeasurementOverlay(emptyList(), 1, 1))
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,7 +63,6 @@ class MainActivity : ComponentActivity() {
                 val config = com.google.ar.core.Config(session).apply {
                     planeFindingMode = com.google.ar.core.Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
                     focusMode = com.google.ar.core.Config.FocusMode.AUTO
-                    // Depth hit tests can locate door edges outside detected plane polygons.
                     depthMode = if (session.isDepthModeSupported(
                             com.google.ar.core.Config.DepthMode.AUTOMATIC
                         )) {
@@ -70,11 +89,9 @@ class MainActivity : ComponentActivity() {
                 trackingStatusText = status
             }
             onDistanceCalculated = { distance ->
-                distanceText = if (distance != null) {
-                    String.format("Distance: %.2f meters", distance)
-                } else {
-                    "Point 1 set. Tap second point."
-                }
+                measuredMeters = distance
+                firstPointPlaced = distance == null
+                distanceText = formattedDistance()
             }
         }
 
@@ -86,9 +103,26 @@ class MainActivity : ComponentActivity() {
                         trackingStatusText = trackingStatusText,
                         distanceText = distanceText,
                         overlay = measurementOverlay,
+                        unitIndex = unitIndex,
+                        onUnitChange = { selected ->
+                            unitIndex = selected
+                            distanceText = formattedDistance()
+                        },
+                        onPlaceAtCenter = { fractionX, fractionY ->
+                            glSurfaceView?.let { view ->
+                                if (view.width > 0 && view.height > 0) {
+                                    tapHelper.queueTap(
+                                        fractionX.coerceIn(0f, 1f) * view.width,
+                                        fractionY.coerceIn(0f, 1f) * view.height
+                                    )
+                                }
+                            }
+                        },
                         onClear = {
                             renderer.clearMeasurement()
-                            distanceText = "Tap two points on a plane to measure distance"
+                            measuredMeters = null
+                            firstPointPlaced = false
+                            distanceText = formattedDistance()
                             measurementOverlay = MeasurementOverlay(emptyList(), 1, 1)
                         },
                         renderer = renderer,
