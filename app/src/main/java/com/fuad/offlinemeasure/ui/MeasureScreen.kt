@@ -50,12 +50,14 @@ fun MeasureScreen(
     unitIndex: Int = 0,
     onUnitChange: (Int) -> Unit = {},
     onPlaceAtCenter: (Float, Float) -> Unit = { _, _ -> },
+    onReplacePoint: (Int, Float, Float) -> Unit = { _, _, _ -> },
     renderer: MeasureRenderer? = null,
     tapHelper: TapHelper? = null,
     onClear: () -> Unit = {},
     onSurfaceCreated: (GLSurfaceView) -> Unit = {}
 ) {
     var precisionMode by remember { mutableStateOf(false) }
+    var editingIndex by remember { mutableIntStateOf(-1) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
     var canvasWidth by remember { mutableIntStateOf(1) }
@@ -69,7 +71,19 @@ fun MeasureScreen(
     fun confirmPoint() {
         val x = (0.5f + offsetX / canvasWidth.coerceAtLeast(1)).coerceIn(0.01f, 0.99f)
         val y = (0.5f + offsetY / canvasHeight.coerceAtLeast(1)).coerceIn(0.01f, 0.99f)
-        onPlaceAtCenter(x, y)
+        if (editingIndex in overlay.points.indices) {
+            onReplacePoint(editingIndex, x, y)
+            editingIndex = -1
+        } else {
+            onPlaceAtCenter(x, y)
+        }
+    }
+    fun editEndpoint(index: Int) {
+        if (index !in overlay.points.indices) return
+        precisionMode = true
+        editingIndex = index
+        offsetX = (overlay.points[index].x / overlay.width.coerceAtLeast(1) - 0.5f) * canvasWidth
+        offsetY = (overlay.points[index].y / overlay.height.coerceAtLeast(1) - 0.5f) * canvasHeight
     }
     Box(modifier = modifier.fillMaxSize()) {
         if (renderer != null && tapHelper != null) {
@@ -191,6 +205,7 @@ fun MeasureScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Button(onClick = {
                         precisionMode = !precisionMode
+                        editingIndex = -1
                         offsetX = 0f
                         offsetY = 0f
                     }) {
@@ -198,11 +213,25 @@ fun MeasureScreen(
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     if (precisionMode) {
-                        Button(onClick = { confirmPoint() }) { Text("Confirm point") }
+                        Button(onClick = { confirmPoint() }) {
+                            Text(if (editingIndex >= 0) "Replace ${editingIndex + 1}" else "Confirm point")
+                        }
                     }
                     Spacer(modifier = Modifier.weight(1f))
                     Button(onClick = { onUnitChange((unitIndex + 1) % 4) }) {
                         Text(listOf("m", "cm", "in", "ft")[unitIndex.coerceIn(0, 3)])
+                    }
+                }
+                if (overlay.points.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Refine:", style = MaterialTheme.typography.labelMedium)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Button(onClick = { editEndpoint(0) }) { Text("Point 1") }
+                        if (overlay.points.size > 1) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Button(onClick = { editEndpoint(1) }) { Text("Point 2") }
+                        }
                     }
                 }
                 if (precisionMode) {
