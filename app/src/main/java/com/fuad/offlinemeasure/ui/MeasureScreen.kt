@@ -49,7 +49,7 @@ fun MeasureScreen(
     overlay: MeasurementOverlay = MeasurementOverlay(emptyList(), 1, 1),
     unitIndex: Int = 0,
     onUnitChange: (Int) -> Unit = {},
-    onPlaceAtCenter: (Float, Float) -> Unit = {},
+    onPlaceAtCenter: (Float, Float) -> Unit = { _, _ -> },
     renderer: MeasureRenderer? = null,
     tapHelper: TapHelper? = null,
     onClear: () -> Unit = {},
