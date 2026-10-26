@@ -1,6 +1,19 @@
 package com.fuad.offlinemeasure.ui
 
 import android.opengl.GLSurfaceView
+import android.graphics.Bitmap
+import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
+import android.view.PixelCopy
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
@@ -61,6 +74,12 @@ fun MeasureScreen(
     var editingIndex by remember { mutableIntStateOf(-1) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
+    var glView by remember { mutableStateOf<GLSurfaceView?>(null) }
+    var magnifiedFrame by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    var capturePending by remember { mutableStateOf(false) }
+    var magnifierTarget by remember { mutableStateOf(Offset(0.5f, 0.5f)) }
+    val latestOffsetX by rememberUpdatedState(offsetX)
+    val latestOffsetY by rememberUpdatedState(offsetY)
     var canvasWidth by remember { mutableIntStateOf(1) }
     var canvasHeight by remember { mutableIntStateOf(1) }
     val density = LocalDensity.current
@@ -86,6 +105,48 @@ fun MeasureScreen(
         offsetX = (overlay.points[index].x / overlay.width.coerceAtLeast(1) - 0.5f) * canvasWidth
         offsetY = (overlay.points[index].y / overlay.height.coerceAtLeast(1) - 0.5f) * canvasHeight
     }
+    // PixelCopy samples the SurfaceView itself, not our Compose overlay.
+    // This creates a genuine zoomed camera crop without changing the AR hit coordinates.
+    LaunchedEffect(precisionMode, glView) {
+        if (!precisionMode) {
+            magnifiedFrame = null
+            return@LaunchedEffect
+        }
+        val view = glView ?: return@LaunchedEffect
+        val handler = Handler(Looper.getMainLooper())
+        while (true) {
+            if (!capturePending && view.width >= 120 && view.height >= 120 &&
+                view.holder.surface.isValid) {
+                val radius = 60
+                val x = (view.width / 2f + latestOffsetX).roundToInt()
+                val y = (view.height / 2f + latestOffsetY).roundToInt()
+                val left = (x - radius).coerceIn(0, view.width - radius * 2)
+                val top = (y - radius).coerceIn(0, view.height - radius * 2)
+                val source = Rect(left, top, left + radius * 2, top + radius * 2)
+                magnifierTarget = Offset(
+                    (x - left).coerceIn(0, radius * 2) / (radius * 2f),
+                    (y - top).coerceIn(0, radius * 2) / (radius * 2f)
+                )
+                val bitmap = Bitmap.createBitmap(480, 480, Bitmap.Config.ARGB_8888)
+                capturePending = true
+                try {
+                    PixelCopy.request(view, source, bitmap, { result ->
+                        if (result == PixelCopy.SUCCESS) {
+                            magnifiedFrame = bitmap.asImageBitmap()
+                        } else {
+                            bitmap.recycle()
+                        }
+                        capturePending = false
+                    }, handler)
+                } catch (_: IllegalArgumentException) {
+                    bitmap.recycle()
+                    capturePending = false
+                }
+            }
+            delay(180L)
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         if (renderer != null && tapHelper != null) {
             AndroidView(
@@ -93,6 +154,7 @@ fun MeasureScreen(
                     GLSurfaceView(context).apply {
                         SampleRender(this, renderer, context.assets)
                         setOnTouchListener(tapHelper)
+                        glView = this
                         onSurfaceCreated(this)
                     }
                 },
@@ -147,6 +209,53 @@ fun MeasureScreen(
                     strokeWidth = 2.dp.toPx())
                 drawLine(yellow, Offset(c.x, c.y + inner + 4.dp.toPx()), Offset(c.x, c.y + outer),
                     strokeWidth = 2.dp.toPx())
+            }
+        }
+
+        if (precisionMode) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopStart).padding(12.dp).size(154.dp),
+                color = Color(0xE61A1A20),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Box(Modifier.fillMaxSize()) {
+                    val frame = magnifiedFrame
+                    if (frame != null) {
+                        Image(
+                            bitmap = frame,
+                            contentDescription = "4 times magnified live camera region",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.FillBounds
+                        )
+                        Canvas(Modifier.fillMaxSize()) {
+                            val c = Offset(
+                                size.width * magnifierTarget.x,
+                                size.height * magnifierTarget.y
+                            )
+                            drawLine(Color.Black, Offset(c.x - 17.dp.toPx(), c.y),
+                                Offset(c.x + 17.dp.toPx(), c.y), 4.dp.toPx())
+                            drawLine(Color.Black, Offset(c.x, c.y - 17.dp.toPx()),
+                                Offset(c.x, c.y + 17.dp.toPx()), 4.dp.toPx())
+                            drawLine(Color(0xFFFFC857), Offset(c.x - 17.dp.toPx(), c.y),
+                                Offset(c.x + 17.dp.toPx(), c.y), 2.dp.toPx())
+                            drawLine(Color(0xFFFFC857), Offset(c.x, c.y - 17.dp.toPx()),
+                                Offset(c.x, c.y + 17.dp.toPx()), 2.dp.toPx())
+                        }
+                    } else {
+                        Text(
+                            "Magnifier starting…",
+                            color = Color.White,
+                            modifier = Modifier.align(Alignment.Center).padding(12.dp),
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                    Text(
+                        "4× LIVE",
+                        color = Color.White,
+                        modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
             }
         }
 
