@@ -18,9 +18,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
       - name: Install Android platform
-        run: sdkmanager "platforms;android-37"
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-37" "build-tools;37.0.0"
       - name: Allow Gradle wrapper execution
         run: chmod +x ./gradlew
       - name: Compile and run unit tests
