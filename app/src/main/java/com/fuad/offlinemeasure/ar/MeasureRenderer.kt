@@ -88,6 +88,7 @@ class MeasureRenderer(
         lastStatus = message
         activity.runOnUiThread { onTrackingStatusChanged?.invoke(message) }
     }
+    var onPlacementQualityChanged: ((String) -> Unit)? = null
     var onDistanceCalculated: ((Float?) -> Unit)? = null
     var onTrackingStatusChanged: ((String) -> Unit)? = null
 
@@ -421,6 +422,13 @@ class MeasureRenderer(
                             Log.d(TAG, "Distance measured: $distance meters")
                         }
 
+                        val quality = when (hit.trackable) {
+                            is Plane -> "Plane hit — estimated AR accuracy"
+                            is DepthPoint -> "Depth hit — edge depth may be noisy"
+                            is Point -> "Feature point — lower confidence"
+                            else -> "AR point — accuracy unknown"
+                        }
+                        activity.runOnUiThread { onPlacementQualityChanged?.invoke(quality) }
                         updateOverlay(viewMatrix, projectionMatrix)
                         Log.d(TAG, "Measurement tap at (" + tap.x + ", " + tap.y +
                             "), type=" + hit.trackable.javaClass.simpleName +
