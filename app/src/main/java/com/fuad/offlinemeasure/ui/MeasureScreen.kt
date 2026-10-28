@@ -105,14 +105,16 @@ fun MeasureScreen(
         }
     }
     fun confirmPoint() {
+        if (editingIndex >= 0) {
+            // Nudges have already changed this anchor; do not move it to screen center.
+            editingIndex = -1
+            offsetX = 0f
+            offsetY = 0f
+            return
+        }
         val x = (0.5f + offsetX / canvasWidth.coerceAtLeast(1)).coerceIn(0.01f, 0.99f)
         val y = (0.5f + offsetY / canvasHeight.coerceAtLeast(1)).coerceIn(0.01f, 0.99f)
-        if (editingIndex in overlay.points.indices) {
-            onReplacePoint(editingIndex, x, y)
-            editingIndex = -1
-        } else {
-            onPlaceAtCenter(x, y)
-        }
+        onPlaceAtCenter(x, y)
     }
     fun editEndpoint(index: Int) {
         if (index !in overlay.points.indices) return
@@ -404,7 +406,7 @@ fun MeasureScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     if (precisionMode) {
                         Button(onClick = { confirmPoint() }) {
-                            Text(if (editingIndex >= 0) "Replace ${editingIndex + 1}" else "Confirm point")
+                            Text(if (editingIndex >= 0) "Done editing" else "Confirm point")
                         }
                     }
                     Spacer(modifier = Modifier.weight(1f))
