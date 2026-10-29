@@ -50,9 +50,18 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.fuad.offlinemeasure.ar.MeasurementOverlay
+import com.fuad.offlinemeasure.ar.ScreenPoint
 import com.fuad.offlinemeasure.ar.MeasureRenderer
 import com.fuad.offlinemeasure.arhelpers.TapHelper
 import com.fuad.offlinemeasure.rendering.SampleRender
+
+private data class MagnifierSnapshot(
+    val bitmap: androidx.compose.ui.graphics.ImageBitmap,
+    val crop: Rect,
+    val points: List<ScreenPoint>,
+    val selectedIndex: Int,
+    val target: Offset
+)
 
 @Composable
 fun MeasureScreen(
@@ -65,6 +74,7 @@ fun MeasureScreen(
     onUnitChange: (Int) -> Unit = {},
     onPlaceAtCenter: (Float, Float) -> Unit = { _, _ -> },
     onReplacePoint: (Int, Float, Float) -> Unit = { _, _, _ -> },
+    onNudgeAnchor: (Int, Float, Float) -> Unit = { _, _, _ -> },
     renderer: MeasureRenderer? = null,
     tapHelper: TapHelper? = null,
     onClear: () -> Unit = {},
@@ -75,11 +85,10 @@ fun MeasureScreen(
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
     var glView by remember { mutableStateOf<GLSurfaceView?>(null) }
-    var magnifiedFrame by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    var magnifierSnapshot by remember { mutableStateOf<MagnifierSnapshot?>(null) }
     var capturePending by remember { mutableStateOf(false) }
-    var magnifierTarget by remember { mutableStateOf(Offset(0.5f, 0.5f)) }
-    // PixelCopy captures camera pixels only; overlay positions are drawn separately.
-    var magnifierCrop by remember { mutableStateOf<Rect?>(null) }
+    // Capture the marker coordinates together with their camera crop.
+    // Rendering them against the latest overlay causes visible jitter at 5 FPS.
     val currentOverlay by rememberUpdatedState(overlay)
     val currentEditingIndex by rememberUpdatedState(editingIndex)
     val latestOffsetX by rememberUpdatedState(offsetX)
@@ -89,16 +98,8 @@ fun MeasureScreen(
     val density = LocalDensity.current
     val nudge = with(density) { 3.dp.toPx() }
     fun adjust(dx: Float, dy: Float) {
-        val selected = overlay.points.getOrNull(editingIndex)
-        if (selected != null) {
-            // Nudges update the actual 3D anchor via ARCore hit testing, not just a UI reticle.
-            val pxX = selected.x * canvasWidth / overlay.width.coerceAtLeast(1)
-            val pxY = selected.y * canvasHeight / overlay.height.coerceAtLeast(1)
-            onReplacePoint(
-                editingIndex,
-                ((pxX + dx) / canvasWidth.coerceAtLeast(1)).coerceIn(0.01f, 0.99f),
-                ((pxY + dy) / canvasHeight.coerceAtLeast(1)).coerceIn(0.01f, 0.99f)
-            )
+        if (editingIndex in overlay.points.indices) {
+            onNudgeAnchor(editingIndex, dx, dy)
         } else {
             offsetX = (offsetX + dx).coerceIn(-canvasWidth * 0.46f, canvasWidth * 0.46f)
             offsetY = (offsetY + dy).coerceIn(-canvasHeight * 0.46f, canvasHeight * 0.46f)
@@ -127,7 +128,7 @@ fun MeasureScreen(
     // This creates a genuine zoomed camera crop without changing the AR hit coordinates.
     LaunchedEffect(precisionMode, glView) {
         if (!precisionMode) {
-            magnifiedFrame = null
+            magnifierSnapshot = null
             return@LaunchedEffect
         }
         val view = glView ?: return@LaunchedEffect
@@ -150,17 +151,26 @@ fun MeasureScreen(
                 val left = (x - radius).coerceIn(0, view.width - radius * 2)
                 val top = (y - radius).coerceIn(0, view.height - radius * 2)
                 val source = Rect(left, top, left + radius * 2, top + radius * 2)
-                magnifierTarget = Offset(
+                val capturedTarget = Offset(
                     (x - left).coerceIn(0, radius * 2) / (radius * 2f),
                     (y - top).coerceIn(0, radius * 2) / (radius * 2f)
                 )
+                val capturedPoints = currentOverlay.points.map { point ->
+                    ScreenPoint(
+                        point.x * view.width / currentOverlay.width.coerceAtLeast(1),
+                        point.y * view.height / currentOverlay.height.coerceAtLeast(1)
+                    )
+                }
+                val capturedIndex = currentEditingIndex
                 val bitmap = Bitmap.createBitmap(480, 480, Bitmap.Config.ARGB_8888)
                 capturePending = true
                 try {
                     PixelCopy.request(view, source, bitmap, { result ->
                         if (result == PixelCopy.SUCCESS) {
-                            magnifierCrop = source
-                            magnifiedFrame = bitmap.asImageBitmap()
+                            magnifierSnapshot = MagnifierSnapshot(
+                                bitmap.asImageBitmap(), Rect(source),
+                                capturedPoints, capturedIndex, capturedTarget
+                            )
                         } else {
                             bitmap.recycle()
                         }
@@ -253,20 +263,20 @@ fun MeasureScreen(
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Box(Modifier.fillMaxSize()) {
-                    val frame = magnifiedFrame
-                    if (frame != null) {
+                    val snapshot = magnifierSnapshot
+                    if (snapshot != null) {
                         Image(
-                            bitmap = frame,
+                            bitmap = snapshot.bitmap,
                             contentDescription = "4 times magnified live camera region",
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.FillBounds
                         )
                         Canvas(Modifier.fillMaxSize()) {
-                            val crop = magnifierCrop
+                            val crop = snapshot.crop
                             if (crop != null) {
                                 val sx = size.width / crop.width().coerceAtLeast(1)
                                 val sy = size.height / crop.height().coerceAtLeast(1)
-                                val markers = overlay.points.map { point ->
+                                val markers = snapshot.points.map { point ->
                                     Offset(
                                         (point.x - crop.left) * sx,
                                         (point.y - crop.top) * sy
@@ -282,9 +292,9 @@ fun MeasureScreen(
                                     if (point.x in -12f..(size.width + 12f) &&
                                         point.y in -12f..(size.height + 12f)) {
                                         drawCircle(
-                                            if (index == editingIndex) Color(0xFFFFC857)
+                                            if (index == snapshot.selectedIndex) Color(0xFFFFC857)
                                             else Color.White,
-                                            if (index == editingIndex) 8.dp.toPx() else 5.dp.toPx(),
+                                            if (index == snapshot.selectedIndex) 8.dp.toPx() else 5.dp.toPx(),
                                             point,
                                             style = Stroke(2.dp.toPx())
                                         )
@@ -296,15 +306,15 @@ fun MeasureScreen(
                                     }
                                 }
                             }
-                            val selected = overlay.points.getOrNull(editingIndex)
+                            val selected = snapshot.points.getOrNull(snapshot.selectedIndex)
                             val c = if (selected != null && crop != null) {
                                 Offset(
                                     (selected.x - crop.left) * size.width / crop.width().coerceAtLeast(1),
                                     (selected.y - crop.top) * size.height / crop.height().coerceAtLeast(1)
                                 )
                             } else Offset(
-                                size.width * magnifierTarget.x,
-                                size.height * magnifierTarget.y
+                                size.width * snapshot.target.x,
+                                size.height * snapshot.target.y
                             )
                             drawLine(Color.Black, Offset(c.x - 17.dp.toPx(), c.y),
                                 Offset(c.x + 17.dp.toPx(), c.y), 4.dp.toPx())
@@ -430,7 +440,7 @@ fun MeasureScreen(
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = if (editingIndex >= 0)
-                            "Arrows reposition Point ${editingIndex + 1} on its detected surface."
+                            "Arrows move Point ${editingIndex + 1} at its current estimated depth."
                         else "Drag crosshair, then confirm a new point.",
                         style = MaterialTheme.typography.labelSmall
                     )
