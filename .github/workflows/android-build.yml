@@ -24,7 +24,12 @@ jobs:
           SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | head -n 1)"
           test -n "$SDKMANAGER" || { echo "Android SDK manager not available"; exit 1; }
           yes | "$SDKMANAGER" --licenses > /dev/null || true
-          "$SDKMANAGER" "platforms;android-37" "build-tools;37.0.0"
+          "$SDKMANAGER" "platforms;android-37.0" "build-tools;36.0.0"
+          # Older tools can resolve API 37 as android-37 although SDK installs android-37.0.
+          if [ -d "$SDK_ROOT/platforms/android-37.0" ] && [ ! -e "$SDK_ROOT/platforms/android-37" ]; then
+            ln -s "$SDK_ROOT/platforms/android-37.0" "$SDK_ROOT/platforms/android-37"
+          fi
+          ls -l "$SDK_ROOT/platforms"
       - name: Allow Gradle wrapper execution
         run: chmod +x ./gradlew
       - name: Compile and run unit tests
