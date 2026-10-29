@@ -3,6 +3,8 @@ package com.fuad.offlinemeasure.ar
 import android.util.Log
 import android.opengl.Matrix
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.ConcurrentLinkedQueue
+import com.google.ar.core.Pose
 import kotlin.math.abs
 import com.fuad.offlinemeasure.arhelpers.DisplayRotationHelper
 import com.fuad.offlinemeasure.arhelpers.TapHelper
@@ -39,6 +41,78 @@ class MeasureRenderer(
     private var viewportWidth = 1
     private var viewportHeight = 1
     private val clearRequested = AtomicBoolean(false)
+    private data class AnchorNudge(val index: Int, val dx: Float, val dy: Float)
+    private val pendingNudges = ConcurrentLinkedQueue<AnchorNudge>()
+
+    /** Queued from UI, applied exclusively on the ARCore GL thread. Pixels are GL-view pixels. */
+    fun nudgeAnchor(index: Int, dxPixels: Float, dyPixels: Float) {
+        if (index in 0..1 && dxPixels.isFinite() && dyPixels.isFinite()) {
+            pendingNudges.offer(AnchorNudge(index, dxPixels, dyPixels))
+        }
+    }
+
+    private fun applyNudges(
+        session: com.google.ar.core.Session,
+        viewMatrix: FloatArray,
+        projectionMatrix: FloatArray
+    ) {
+        val vp = FloatArray(16)
+        Matrix.multiplyMM(vp, 0, projectionMatrix, 0, viewMatrix, 0)
+        val inverse = FloatArray(16)
+        if (!Matrix.invertM(inverse, 0, vp, 0)) {
+            pendingNudges.clear()
+            return
+        }
+        while (true) {
+            val request = pendingNudges.poll() ?: break
+            val anchor = measurementAnchors.getOrNull(request.index) ?: continue
+            if (anchor.trackingState != TrackingState.TRACKING) continue
+            val pose = anchor.pose
+            val clip = FloatArray(4)
+            Matrix.multiplyMV(
+                clip, 0, vp, 0,
+                floatArrayOf(pose.tx(), pose.ty(), pose.tz(), 1f), 0
+            )
+            if (clip[3] <= 0.001f) continue
+            val deltaX = 2f * request.dx.coerceIn(-24f, 24f) / viewportWidth.coerceAtLeast(1)
+            val deltaY = -2f * request.dy.coerceIn(-24f, 24f) / viewportHeight.coerceAtLeast(1)
+            // Preserve clip-space depth while moving in screen space.
+            // This avoids unreliable new surface hits on thin edges.
+            val shiftedClip = floatArrayOf(
+                clip[0] + deltaX * clip[3],
+                clip[1] + deltaY * clip[3],
+                clip[2], clip[3]
+            )
+            val world = FloatArray(4)
+            Matrix.multiplyMV(world, 0, inverse, 0, shiftedClip, 0)
+            if (kotlin.math.abs(world[3]) < 1e-6f) continue
+            val x = world[0] / world[3]
+            val y = world[1] / world[3]
+            val z = world[2] / world[3]
+            if (!x.isFinite() || !y.isFinite() || !z.isFinite()) continue
+            try {
+                val moved = session.createAnchor(Pose.makeTranslation(x, y, z))
+                measurementAnchors[request.index] = moved
+                anchor.detach()
+                if (measurementAnchors.size == 2) {
+                    val a = measurementAnchors[0].pose
+                    val b = measurementAnchors[1].pose
+                    val meters = DistanceCalculator.distanceMeters(
+                        MeasurementPoint(a.tx(), a.ty(), a.tz()),
+                        MeasurementPoint(b.tx(), b.ty(), b.tz())
+                    )
+                    activity.runOnUiThread { onDistanceCalculated?.invoke(meters) }
+                }
+                activity.runOnUiThread {
+                    onPlacementQualityChanged?.invoke(
+                        "Fine adjustment at retained depth — verify actual surface"
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not reposition anchor", e)
+            }
+        }
+    }
     private var lastOverlay: MeasurementOverlay? = null
     var onOverlayChanged: ((MeasurementOverlay) -> Unit)? = null
 
@@ -216,6 +290,7 @@ class MeasureRenderer(
         }
 
         if (clearRequested.getAndSet(false)) {
+            pendingNudges.clear()
             measurementAnchors.forEach { it.detach() }
             measurementAnchors.clear()
             lastOverlay = null
@@ -329,6 +404,7 @@ class MeasureRenderer(
         // Hide the ARCore grid for an uncluttered camera/measurement view.
         val viewMatrix = FloatArray(16)
         camera.getViewMatrix(viewMatrix, 0)
+        applyNudges(session, viewMatrix, projectionMatrix)
         updateOverlay(viewMatrix, projectionMatrix)
 
         /*

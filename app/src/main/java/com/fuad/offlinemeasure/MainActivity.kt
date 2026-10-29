@@ -121,6 +121,9 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         },
+                        onNudgeAnchor = { index, dx, dy ->
+                            renderer.nudgeAnchor(index, dx, dy)
+                        },
                         onReplacePoint = { index, fractionX, fractionY ->
                             glSurfaceView?.let { view ->
                                 if (view.width > 0 && view.height > 0) {
