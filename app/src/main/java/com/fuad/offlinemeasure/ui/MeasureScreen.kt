@@ -31,11 +31,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import com.fuad.offlinemeasure.measurement.AccuracyMetrics
+import java.util.Locale
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,6 +73,7 @@ fun MeasureScreen(
     trackingStatusText: String = "Searching for surfaces...",
     placementQualityText: String = "Point quality not yet evaluated",
     distanceText: String = "Tap two points on a plane to measure distance",
+    measuredMeters: Float? = null,
     overlay: MeasurementOverlay = MeasurementOverlay(emptyList(), 1, 1),
     unitIndex: Int = 0,
     onUnitChange: (Int) -> Unit = {},
@@ -81,6 +86,12 @@ fun MeasureScreen(
     onSurfaceCreated: (GLSurfaceView) -> Unit = {}
 ) {
     var precisionMode by remember { mutableStateOf(false) }
+    var showAccuracyDialog by remember { mutableStateOf(false) }
+    var referenceCm by remember { mutableStateOf("30") }
+    val referenceMeters = referenceCm.trim().toDoubleOrNull()?.div(100.0)
+    val accuracy = if (referenceMeters != null && measuredMeters != null) {
+        AccuracyMetrics.calculate(referenceMeters, measuredMeters.toDouble())
+    } else null
     var editingIndex by remember { mutableIntStateOf(-1) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
@@ -185,6 +196,38 @@ fun MeasureScreen(
         }
     }
 
+    if (showAccuracyDialog) {
+        AlertDialog(
+            onDismissRequest = { showAccuracyDialog = false },
+            title = { Text("Check measurement accuracy") },
+            text = {
+                Column {
+                    Text("Enter the actual length measured with a ruler or tape.")
+                    OutlinedTextField(
+                        value = referenceCm,
+                        onValueChange = { referenceCm = it },
+                        label = { Text("Reference length (cm)") },
+                        singleLine = true
+                    )
+                    if (accuracy == null) {
+                        Text("Enter a positive reference length.")
+                    } else {
+                        Text(String.format(Locale.US, "Measured: %.2f cm", accuracy.measuredMeters * 100))
+                        Text(String.format(Locale.US, "Absolute error: %.2f cm", accuracy.absoluteErrorCm))
+                        Text(String.format(Locale.US, "Percentage error: %.2f%%", accuracy.percentError))
+                        Text(
+                            if (accuracy.signedErrorCm >= 0) "Measurement is higher than reference."
+                            else "Measurement is lower than reference."
+                        )
+                        Text("One comparison does not establish device accuracy. Repeat from different angles.")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showAccuracyDialog = false }) { Text("Close") }
+            }
+        )
+    }
     Box(modifier = modifier.fillMaxSize()) {
         if (renderer != null && tapHelper != null) {
             AndroidView(
@@ -404,6 +447,12 @@ fun MeasureScreen(
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
+                if (measuredMeters != null) {
+                    Button(onClick = { showAccuracyDialog = true }) {
+                        Text("Check accuracy")
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Button(onClick = {
                         precisionMode = !precisionMode

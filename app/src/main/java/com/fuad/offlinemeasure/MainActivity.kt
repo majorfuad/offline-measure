@@ -105,6 +105,7 @@ class MainActivity : ComponentActivity() {
                         trackingStatusText = trackingStatusText,
                         placementQualityText = placementQualityText,
                         distanceText = distanceText,
+                        measuredMeters = measuredMeters,
                         overlay = measurementOverlay,
                         unitIndex = unitIndex,
                         onUnitChange = { selected ->
