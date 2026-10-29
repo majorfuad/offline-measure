@@ -39,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import com.fuad.offlinemeasure.measurement.AccuracyMetrics
+import com.fuad.offlinemeasure.measurement.RepeatabilityReport
 import java.util.Locale
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -88,9 +89,16 @@ fun MeasureScreen(
     var precisionMode by remember { mutableStateOf(false) }
     var showAccuracyDialog by remember { mutableStateOf(false) }
     var referenceCm by remember { mutableStateOf("30") }
+    var capturedReadings by remember { mutableStateOf<List<Double>>(emptyList()) }
+    var recordedReference by remember { mutableStateOf<Double?>(null) }
     val referenceMeters = referenceCm.trim().toDoubleOrNull()?.div(100.0)
     val accuracy = if (referenceMeters != null && measuredMeters != null) {
         AccuracyMetrics.calculate(referenceMeters, measuredMeters.toDouble())
+    } else null
+    val referenceMatches = referenceMeters != null && recordedReference != null &&
+        kotlin.math.abs(referenceMeters - recordedReference!!) < 0.0000001
+    val report = if (referenceMatches) {
+        RepeatabilityReport.calculate(recordedReference!!, capturedReadings)
     } else null
     var editingIndex by remember { mutableIntStateOf(-1) }
     var offsetX by remember { mutableFloatStateOf(0f) }
@@ -220,6 +228,31 @@ fun MeasureScreen(
                             else "Measurement is lower than reference."
                         )
                         Text("One comparison does not establish device accuracy. Repeat from different angles.")
+                        Button(onClick = {
+                            val known = referenceMeters
+                            val measured = measuredMeters
+                            if (known != null && known > 0.0 && measured != null) {
+                                if (!referenceMatches) capturedReadings = emptyList()
+                                recordedReference = known
+                                capturedReadings = capturedReadings + measured.toDouble()
+                            }
+                        }) { Text("Record this reading") }
+                    }
+                    if (capturedReadings.isNotEmpty() && !referenceMatches) {
+                        Text("Reference length changed. Record a reading to start a new series.")
+                    }
+                    if (report != null) {
+                        Text("Recorded: ${report.count} readings")
+                        Text(String.format(Locale.US, "Mean: %.2f cm", report.meanMeters * 100.0))
+                        Text(String.format(Locale.US, "Mean absolute error: %.2f cm (%.2f%%)",
+                            report.meanAbsoluteErrorCm, report.meanAbsolutePercentError))
+                        Text(String.format(Locale.US, "Bias: %+.2f cm", report.biasCm))
+                        Text(String.format(Locale.US, "Sample variation (SD): %.2f cm", report.sampleStdDevCm))
+                        Text("Variation indicates consistency, not absolute accuracy.")
+                        Button(onClick = {
+                            capturedReadings = emptyList()
+                            recordedReference = null
+                        }) { Text("Reset readings") }
                     }
                 }
             },
