@@ -273,7 +273,7 @@ fun MeasureScreen(
                         )
                         Canvas(Modifier.fillMaxSize()) {
                             val crop = snapshot.crop
-                            if (crop != null) {
+                            run {
                                 val sx = size.width / crop.width().coerceAtLeast(1)
                                 val sy = size.height / crop.height().coerceAtLeast(1)
                                 val markers = snapshot.points.map { point ->
@@ -299,7 +299,7 @@ fun MeasureScreen(
                                             style = Stroke(2.dp.toPx())
                                         )
                                         drawCircle(
-                                            if (index == editingIndex) Color(0xFFFFC857)
+                                            if (index == snapshot.selectedIndex) Color(0xFFFFC857)
                                             else Color.White,
                                             2.dp.toPx(), point
                                         )
@@ -307,7 +307,7 @@ fun MeasureScreen(
                                 }
                             }
                             val selected = snapshot.points.getOrNull(snapshot.selectedIndex)
-                            val c = if (selected != null && crop != null) {
+                            val c = if (selected != null) {
                                 Offset(
                                     (selected.x - crop.left) * size.width / crop.width().coerceAtLeast(1),
                                     (selected.y - crop.top) * size.height / crop.height().coerceAtLeast(1)
