@@ -15,6 +15,8 @@ import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -209,7 +211,7 @@ fun MeasureScreen(
             onDismissRequest = { showAccuracyDialog = false },
             title = { Text("Check measurement accuracy") },
             text = {
-                Column {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     Text("Enter the actual length measured with a ruler or tape.")
                     OutlinedTextField(
                         value = referenceCm,
