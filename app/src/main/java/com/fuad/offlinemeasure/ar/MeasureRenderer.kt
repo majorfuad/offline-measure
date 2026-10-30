@@ -46,10 +46,30 @@ class MeasureRenderer(
     private val clearRequested = AtomicBoolean(false)
     private data class AnchorNudge(val index: Int, val dx: Float, val dy: Float)
     private val pendingNudges = ConcurrentLinkedQueue<AnchorNudge>()
+    @Volatile private var multiPointMode = false
+    private val maxPathPoints = 12
+
+    /** Changes are applied on the render thread through the volatile flag. */
+    fun setMultiPointMode(enabled: Boolean) {
+        multiPointMode = enabled
+        clearMeasurement()
+    }
+
+    private fun measurementLength(): Float? {
+        if (measurementAnchors.size < 2) return null
+        return measurementAnchors.zipWithNext().sumOf { (first, second) ->
+            val a = first.pose
+            val b = second.pose
+            DistanceCalculator.distanceMeters(
+                MeasurementPoint(a.tx(), a.ty(), a.tz()),
+                MeasurementPoint(b.tx(), b.ty(), b.tz())
+            ).toDouble()
+        }.toFloat()
+    }
 
     /** Queued from UI, applied exclusively on the ARCore GL thread. Pixels are GL-view pixels. */
     fun nudgeAnchor(index: Int, dxPixels: Float, dyPixels: Float) {
-        if (index in 0..1 && dxPixels.isFinite() && dyPixels.isFinite()) {
+        if (index in 0 until maxPathPoints && dxPixels.isFinite() && dyPixels.isFinite()) {
             pendingNudges.offer(AnchorNudge(index, dxPixels, dyPixels))
         }
     }
@@ -151,15 +171,8 @@ class MeasureRenderer(
                     else session.createAnchor(movedPose)
                 measurementAnchors[request.index] = moved
                 anchor.detach()
-                if (measurementAnchors.size == 2) {
-                    val a = measurementAnchors[0].pose
-                    val b = measurementAnchors[1].pose
-                    val meters = DistanceCalculator.distanceMeters(
-                        MeasurementPoint(a.tx(), a.ty(), a.tz()),
-                        MeasurementPoint(b.tx(), b.ty(), b.tz())
-                    )
-                    activity.runOnUiThread { onDistanceCalculated?.invoke(meters) }
-                }
+                val meters = measurementLength()
+                activity.runOnUiThread { onDistanceCalculated?.invoke(meters) }
                 activity.runOnUiThread {
                     onPlacementQualityChanged?.invoke(
                         if (plane != null) "Fine adjustment constrained to tracked plane"
@@ -183,7 +196,8 @@ class MeasureRenderer(
         if (old != null && old.width == overlay.width && old.height == overlay.height &&
             old.points.size == overlay.points.size &&
             old.points.zip(overlay.points).all { (a, b) ->
-                abs(a.x - b.x) < 1.5f && abs(a.y - b.y) < 1.5f
+                ((a.x.isNaN() && b.x.isNaN()) || abs(a.x - b.x) < 1.5f) &&
+                ((a.y.isNaN() && b.y.isNaN()) || abs(a.y - b.y) < 1.5f)
             }) return
         lastOverlay = overlay
         activity.runOnUiThread { onOverlayChanged?.invoke(overlay) }
@@ -192,18 +206,18 @@ class MeasureRenderer(
     private fun updateOverlay(viewMatrix: FloatArray, projectionMatrix: FloatArray) {
         val vp = FloatArray(16)
         Matrix.multiplyMM(vp, 0, projectionMatrix, 0, viewMatrix, 0)
-        val screenPoints = measurementAnchors.mapNotNull { anchor ->
-            if (anchor.trackingState != TrackingState.TRACKING) return@mapNotNull null
+        val screenPoints = measurementAnchors.map { anchor ->
+            if (anchor.trackingState != TrackingState.TRACKING) return@map ScreenPoint(Float.NaN, Float.NaN)
             val pose = anchor.pose
             val clip = FloatArray(4)
             Matrix.multiplyMV(
                 clip, 0, vp, 0,
                 floatArrayOf(pose.tx(), pose.ty(), pose.tz(), 1f), 0
             )
-            if (clip[3] <= 0.001f) return@mapNotNull null
+            if (clip[3] <= 0.001f) return@map ScreenPoint(Float.NaN, Float.NaN)
             val nx = clip[0] / clip[3]
             val ny = clip[1] / clip[3]
-            if (!nx.isFinite() || !ny.isFinite()) return@mapNotNull null
+            if (!nx.isFinite() || !ny.isFinite()) return@map ScreenPoint(Float.NaN, Float.NaN)
             ScreenPoint((nx + 1f) * viewportWidth / 2f,
                 (1f - ny) * viewportHeight / 2f)
         }
@@ -542,32 +556,23 @@ class MeasureRenderer(
                             anchorPlanes[tap.replaceIndex] = hit.trackable as? Plane
                             Log.d(TAG, "Replaced measurement endpoint ${tap.replaceIndex + 1}")
                         } else {
-                            if (measurementAnchors.size == 2) {
+                            if (!multiPointMode && measurementAnchors.size == 2) {
                                 measurementAnchors.forEach { it.detach() }
                                 measurementAnchors.clear()
                                 anchorPlanes.clear()
+                            }
+                            if (measurementAnchors.size >= maxPathPoints) {
+                                placementFeedback = "Maximum $maxPathPoints path points. Clear to start again."
+                                postStatus(placementFeedback!!)
+                                break
                             }
                             measurementAnchors.add(hit.createAnchor())
                             anchorPlanes.add(hit.trackable as? Plane)
                         }
 
-                        if (measurementAnchors.size == 1) {
-                            activity.runOnUiThread {
-                                onDistanceCalculated?.invoke(null)
-                            }
-                            Log.d(TAG, "Measurement point 1 placed")
-                        } else {
-                            val a = measurementAnchors[0].pose
-                            val b = measurementAnchors[1].pose
-                            val distance = DistanceCalculator.distanceMeters(
-                                MeasurementPoint(a.tx(), a.ty(), a.tz()),
-                                MeasurementPoint(b.tx(), b.ty(), b.tz())
-                            )
-                            activity.runOnUiThread {
-                                onDistanceCalculated?.invoke(distance)
-                            }
-                            Log.d(TAG, "Distance measured: $distance meters")
-                        }
+                        val length = measurementLength()
+                        activity.runOnUiThread { onDistanceCalculated?.invoke(length) }
+                        Log.d(TAG, "Path points=${measurementAnchors.size}, length=$length meters")
 
                         val quality = when (hit.trackable) {
                             is Plane -> "Tracked plane — consistent flat-surface placement"

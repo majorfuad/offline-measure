@@ -77,6 +77,8 @@ fun MeasureScreen(
     placementQualityText: String = "Point quality not yet evaluated",
     distanceText: String = "Tap two points on a plane to measure distance",
     measuredMeters: Float? = null,
+    pathMode: Boolean = false,
+    onPathModeChange: (Boolean) -> Unit = {},
     overlay: MeasurementOverlay = MeasurementOverlay(emptyList(), 1, 1),
     unitIndex: Int = 0,
     onUnitChange: (Int) -> Unit = {},
@@ -119,7 +121,7 @@ fun MeasureScreen(
     val density = LocalDensity.current
     val nudge = with(density) { 3.dp.toPx() }
     fun adjust(dx: Float, dy: Float) {
-        if (editingIndex in overlay.points.indices) {
+        if (editingIndex in overlay.points.indices && overlay.points[editingIndex].x.isFinite()) {
             onNudgeAnchor(editingIndex, dx, dy)
         } else {
             offsetX = (offsetX + dx).coerceIn(-canvasWidth * 0.46f, canvasWidth * 0.46f)
@@ -139,7 +141,8 @@ fun MeasureScreen(
         onPlaceAtCenter(x, y)
     }
     fun editEndpoint(index: Int) {
-        if (index !in overlay.points.indices) return
+        if (index !in overlay.points.indices ||
+            !overlay.points[index].x.isFinite() || !overlay.points[index].y.isFinite()) return
         precisionMode = true
         editingIndex = index
         offsetX = 0f
@@ -283,16 +286,20 @@ fun MeasureScreen(
             val sx = size.width / overlay.width.coerceAtLeast(1)
             val sy = size.height / overlay.height.coerceAtLeast(1)
             val points = overlay.points.map { Offset(it.x * sx, it.y * sy) }
-            if (points.size == 2) {
-                drawLine(
-                    color = Color(0xFFFFC857),
-                    start = points[0],
-                    end = points[1],
-                    strokeWidth = 5.dp.toPx(),
-                    cap = StrokeCap.Round
-                )
+            points.zipWithNext().forEach { (start, end) ->
+                if (start.x.isFinite() && start.y.isFinite() &&
+                    end.x.isFinite() && end.y.isFinite()) {
+                    drawLine(
+                        color = Color(0xFFFFC857),
+                        start = start,
+                        end = end,
+                        strokeWidth = 5.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                }
             }
             points.forEach { point ->
+                if (!point.x.isFinite() || !point.y.isFinite()) return@forEach
                 drawCircle(color = Color.Black.copy(alpha = 0.6f), radius = 11.dp.toPx(), center = point)
                 drawCircle(color = Color(0xFFFFC857), radius = 7.dp.toPx(), center = point)
                 drawCircle(color = Color.White, radius = 3.dp.toPx(), center = point)
@@ -360,14 +367,18 @@ fun MeasureScreen(
                                         (point.y - crop.top) * sy
                                     )
                                 }
-                                if (markers.size == 2) {
-                                    drawLine(
-                                        Color(0xFFFFC857), markers[0], markers[1],
-                                        2.dp.toPx(), cap = StrokeCap.Round
-                                    )
+                                markers.zipWithNext().forEach { (a, b) ->
+                                    if (a.x.isFinite() && a.y.isFinite() &&
+                                        b.x.isFinite() && b.y.isFinite()) {
+                                        drawLine(
+                                            Color(0xFFFFC857), a, b,
+                                            2.dp.toPx(), cap = StrokeCap.Round
+                                        )
+                                    }
                                 }
                                 markers.forEachIndexed { index, point ->
-                                    if (point.x in -12f..(size.width + 12f) &&
+                                    if (point.x.isFinite() && point.y.isFinite() &&
+                                        point.x in -12f..(size.width + 12f) &&
                                         point.y in -12f..(size.height + 12f)) {
                                         drawCircle(
                                             if (index == snapshot.selectedIndex) Color(0xFFFFC857)
@@ -421,7 +432,8 @@ fun MeasureScreen(
             }
         }
 
-        if (overlay.points.size == 2 && distanceText.startsWith("Distance:")) {
+        if (overlay.points.size == 2 && !pathMode && distanceText.startsWith("Distance:") &&
+            overlay.points.all { it.x.isFinite() && it.y.isFinite() }) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val density = LocalDensity.current
                 val sx = constraints.maxWidth.toFloat() / overlay.width.coerceAtLeast(1)
@@ -482,7 +494,23 @@ fun MeasureScreen(
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-                if (measuredMeters != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Measure:", style = MaterialTheme.typography.labelMedium)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(onClick = { onPathModeChange(false) }, enabled = pathMode) {
+                        Text("Distance")
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Button(onClick = { onPathModeChange(true) }, enabled = !pathMode) {
+                        Text("Path")
+                    }
+                    if (pathMode) {
+                        Text(" ${overlay.points.size}/12 points",
+                            style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                if (measuredMeters != null && !pathMode) {
                     Button(onClick = { showAccuracyDialog = true }) {
                         Text("Check accuracy")
                     }
@@ -513,11 +541,17 @@ fun MeasureScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Refine:", style = MaterialTheme.typography.labelMedium)
                         Spacer(modifier = Modifier.width(6.dp))
-                        Button(onClick = { editEndpoint(0) }) { Text("Point 1") }
-                        if (overlay.points.size > 1) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Button(onClick = { editEndpoint(1) }) { Text("Point 2") }
-                        }
+                        val currentIndex = editingIndex.coerceIn(0, overlay.points.lastIndex)
+                        Button(onClick = {
+                            editEndpoint((currentIndex - 1 + overlay.points.size) % overlay.points.size)
+                        }) { Text("◀") }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Point ${if (editingIndex >= 0) editingIndex + 1 else 1}",
+                            style = MaterialTheme.typography.labelMedium)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Button(onClick = {
+                            editEndpoint((currentIndex + 1) % overlay.points.size)
+                        }) { Text("▶") }
                     }
                 }
                 if (precisionMode) {

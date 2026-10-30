@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
     private var measuredMeters by mutableStateOf<Float?>(null)
     private var firstPointPlaced by mutableStateOf(false)
     var unitIndex by mutableStateOf(0)
+    var pathMode by mutableStateOf(false)
     private val unitLabels = listOf("m", "cm", "in", "ft")
 
     private fun formattedDistance(): String {
@@ -48,7 +49,9 @@ class MainActivity : ComponentActivity() {
             3 -> meters * 3.2808399f
             else -> meters
         }
-        return String.format(Locale.US, "Distance: %.2f %s", value, unitLabels[unitIndex])
+        return String.format(Locale.US,
+            if (pathMode) "Path total: %.2f %s" else "Distance: %.2f %s",
+            value, unitLabels[unitIndex])
     }
     var measurementOverlay by mutableStateOf(MeasurementOverlay(emptyList(), 1, 1))
 
@@ -108,6 +111,16 @@ class MainActivity : ComponentActivity() {
                         measuredMeters = measuredMeters,
                         overlay = measurementOverlay,
                         unitIndex = unitIndex,
+                        pathMode = pathMode,
+                        onPathModeChange = { enabled ->
+                            pathMode = enabled
+                            renderer.setMultiPointMode(enabled)
+                            measuredMeters = null
+                            firstPointPlaced = false
+                            measurementOverlay = MeasurementOverlay(emptyList(), 1, 1)
+                            placementQualityText = "Point quality not yet evaluated"
+                            distanceText = formattedDistance()
+                        },
                         onUnitChange = { selected ->
                             unitIndex = selected
                             distanceText = formattedDistance()
