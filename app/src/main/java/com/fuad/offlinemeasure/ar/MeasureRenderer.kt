@@ -432,24 +432,33 @@ class MeasureRenderer(
                         tap.y
                     )
 
-                // Depth-assisted hits can land on door edges outside plane polygons.
-                // Prefer a nearby depth hit, then the closest valid tracked plane.
-                // A feature point is the last resort because its depth may be noisy.
+                // For tile/floor/wall interiors, a tracked plane provides a consistent
+                // geometric surface. Prefer it over raw depth, which can vary between taps.
+                // Depth/feature hits remain fallbacks for thin door edges outside plane polygons.
                 val validHits = hitResults.filter { hit ->
-                    when (val trackable = hit.trackable) {
-                        is DepthPoint -> trackable.trackingState == TrackingState.TRACKING
-                        is Plane -> trackable.trackingState == TrackingState.TRACKING &&
-                            trackable.subsumedBy == null &&
-                            trackable.isPoseInPolygon(hit.hitPose)
-                        is Point -> trackable.trackingState == TrackingState.TRACKING &&
-                            trackable.orientationMode == Point.OrientationMode.ESTIMATED_SURFACE_NORMAL
-                        else -> false
+                    val distance = hit.distance
+                    if (!distance.isFinite() || distance <= 0.05f || distance > 8f) {
+                        false
+                    } else {
+                        when (val trackable = hit.trackable) {
+                            is DepthPoint -> trackable.trackingState == TrackingState.TRACKING
+                            is Plane -> trackable.trackingState == TrackingState.TRACKING &&
+                                trackable.subsumedBy == null &&
+                                trackable.isPoseInPolygon(hit.hitPose)
+                            is Point -> trackable.trackingState == TrackingState.TRACKING &&
+                                trackable.orientationMode == Point.OrientationMode.ESTIMATED_SURFACE_NORMAL
+                            else -> false
+                        }
                     }
                 }
 
-                val preferredHit = validHits.firstOrNull { it.trackable is DepthPoint }
-                    ?: validHits.firstOrNull { it.trackable is Plane }
-                    ?: validHits.firstOrNull { it.trackable is Point }
+                val planeHit = validHits.filter { it.trackable is Plane }
+                    .minByOrNull { it.distance }
+                val depthHit = validHits.filter { it.trackable is DepthPoint }
+                    .minByOrNull { it.distance }
+                val featureHit = validHits.filter { it.trackable is Point }
+                    .minByOrNull { it.distance }
+                val preferredHit = planeHit ?: depthHit ?: featureHit
 
                 if (preferredHit == null) {
                     placementFeedback = "No reliable 3D point here. Move closer and scan the edge."
@@ -499,7 +508,7 @@ class MeasureRenderer(
                         }
 
                         val quality = when (hit.trackable) {
-                            is Plane -> "Plane hit — estimated AR accuracy"
+                            is Plane -> "Tracked plane — consistent flat-surface placement"
                             is DepthPoint -> "Depth hit — edge depth may be noisy"
                             is Point -> "Feature point — lower confidence"
                             else -> "AR point — accuracy unknown"
