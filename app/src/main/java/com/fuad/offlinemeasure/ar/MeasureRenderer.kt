@@ -38,6 +38,9 @@ class MeasureRenderer(
 
     // Retain ARCore anchors so points stay fixed in world space.
     private val measurementAnchors = mutableListOf<Anchor>()
+    // Track the plane used to place each anchor. Null means a depth/feature/free anchor.
+    // These lists are only mutated from the GL thread.
+    private val anchorPlanes = mutableListOf<Plane?>()
     private var viewportWidth = 1
     private var viewportHeight = 1
     private val clearRequested = AtomicBoolean(false)
@@ -49,6 +52,40 @@ class MeasureRenderer(
         if (index in 0..1 && dxPixels.isFinite() && dyPixels.isFinite()) {
             pendingNudges.offer(AnchorNudge(index, dxPixels, dyPixels))
         }
+    }
+
+    private fun unproject(
+        inverseVp: FloatArray, ndcX: Float, ndcY: Float, ndcZ: Float
+    ): FloatArray? {
+        val output = FloatArray(4)
+        Matrix.multiplyMV(output, 0, inverseVp, 0, floatArrayOf(ndcX, ndcY, ndcZ, 1f), 0)
+        if (!output[3].isFinite() || abs(output[3]) < 1e-6f) return null
+        return floatArrayOf(output[0] / output[3], output[1] / output[3], output[2] / output[3])
+    }
+
+    private fun projectedPlanePosition(
+        plane: Plane,
+        inverseVp: FloatArray,
+        ndcX: Float,
+        ndcY: Float
+    ): FloatArray? {
+        if (plane.trackingState != TrackingState.TRACKING || plane.subsumedBy != null) return null
+        val near = unproject(inverseVp, ndcX, ndcY, -1f) ?: return null
+        val far = unproject(inverseVp, ndcX, ndcY, 1f) ?: return null
+        val center = plane.centerPose
+        val normal = FloatArray(3)
+        center.getTransformedAxis(1, 1f, normal, 0)
+        val ray = FloatArray(3) { i -> far[i] - near[i] }
+        val denominator = (0..2).sumOf { (normal[it] * ray[it]).toDouble() }.toFloat()
+        if (abs(denominator) < 1e-5f) return null
+        val t = ((center.tx() - near[0]) * normal[0] +
+            (center.ty() - near[1]) * normal[1] +
+            (center.tz() - near[2]) * normal[2]) / denominator
+        if (!t.isFinite() || t <= 0f || t >= 1f) return null
+        val point = FloatArray(3) { i -> near[i] + t * ray[i] }
+        if (point.any { !it.isFinite() }) return null
+        if (!plane.isPoseInPolygon(Pose.makeTranslation(point[0], point[1], point[2]))) return null
+        return point
     }
 
     private fun applyNudges(
@@ -76,8 +113,8 @@ class MeasureRenderer(
             if (clip[3] <= 0.001f) continue
             val deltaX = 2f * request.dx.coerceIn(-24f, 24f) / viewportWidth.coerceAtLeast(1)
             val deltaY = -2f * request.dy.coerceIn(-24f, 24f) / viewportHeight.coerceAtLeast(1)
-            // Preserve clip-space depth while moving in screen space.
-            // This avoids unreliable new surface hits on thin edges.
+            // For detected planes, intersect the nudged screen ray with that
+            // same plane. Depth/feature points retain the existing depth policy.
             val shiftedClip = floatArrayOf(
                 clip[0] + deltaX * clip[3],
                 clip[1] + deltaY * clip[3],
@@ -90,8 +127,28 @@ class MeasureRenderer(
             val y = world[1] / world[3]
             val z = world[2] / world[3]
             if (!x.isFinite() || !y.isFinite() || !z.isFinite()) continue
+            val plane = anchorPlanes.getOrNull(request.index)
+            val adjustedPoint = if (plane != null) {
+                projectedPlanePosition(
+                    plane, inverse,
+                    shiftedClip[0] / shiftedClip[3],
+                    shiftedClip[1] / shiftedClip[3]
+                )
+            } else floatArrayOf(x, y, z)
+            if (adjustedPoint == null) {
+                activity.runOnUiThread {
+                    onPlacementQualityChanged?.invoke(
+                        "Nudge outside tracked plane: endpoint unchanged"
+                    )
+                }
+                continue
+            }
             try {
-                val moved = session.createAnchor(Pose.makeTranslation(x, y, z))
+                val movedPose = Pose.makeTranslation(
+                    adjustedPoint[0], adjustedPoint[1], adjustedPoint[2]
+                )
+                val moved = if (plane != null) plane.createAnchor(movedPose)
+                    else session.createAnchor(movedPose)
                 measurementAnchors[request.index] = moved
                 anchor.detach()
                 if (measurementAnchors.size == 2) {
@@ -105,7 +162,8 @@ class MeasureRenderer(
                 }
                 activity.runOnUiThread {
                     onPlacementQualityChanged?.invoke(
-                        "Fine adjustment at retained depth — verify actual surface"
+                        if (plane != null) "Fine adjustment constrained to tracked plane"
+                        else "Fine adjustment at retained depth — verify actual surface"
                     )
                 }
             } catch (e: Exception) {
@@ -293,6 +351,7 @@ class MeasureRenderer(
             pendingNudges.clear()
             measurementAnchors.forEach { it.detach() }
             measurementAnchors.clear()
+            anchorPlanes.clear()
             lastOverlay = null
             publishOverlay(MeasurementOverlay(emptyList(), viewportWidth, viewportHeight))
         }
@@ -480,13 +539,16 @@ class MeasureRenderer(
                             val replacement = hit.createAnchor()
                             measurementAnchors[tap.replaceIndex].detach()
                             measurementAnchors[tap.replaceIndex] = replacement
+                            anchorPlanes[tap.replaceIndex] = hit.trackable as? Plane
                             Log.d(TAG, "Replaced measurement endpoint ${tap.replaceIndex + 1}")
                         } else {
                             if (measurementAnchors.size == 2) {
                                 measurementAnchors.forEach { it.detach() }
                                 measurementAnchors.clear()
+                                anchorPlanes.clear()
                             }
                             measurementAnchors.add(hit.createAnchor())
+                            anchorPlanes.add(hit.trackable as? Plane)
                         }
 
                         if (measurementAnchors.size == 1) {
